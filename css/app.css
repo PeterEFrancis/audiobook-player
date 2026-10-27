@@ -10,3 +10,8 @@
 }
 @media(min-width:1200px){.topbar{padding-inline:40px;grid-template-columns:minmax(110px,1fr) minmax(200px,340px) auto;gap:24px}.network-label{font-size:10px;margin-right:6px}.connect-button{font-size:11px;padding:11px 13px}#content{padding:40px}.resume-card{padding:24px;gap:22px;min-height:212px}.resume-cover{width:104px;height:104px}.resume-body .eyebrow{font-size:8px}.resume-body h2{font-size:26px}.progress-meta{font-size:9px}.resume-actions .button{font-size:10px;padding:10px 13px}.resume-actions .text-button{font-size:10px}.offline-promo{padding:28px}.offline-promo h2{font-size:27px}.offline-promo p{font-size:11px}.shelf-toolbar{gap:25px}.toolbar-actions{gap:14px}.filters button{font-size:11px;padding:9px 12px}.toolbar-actions select{width:120px;max-width:120px;min-width:120px;font-size:11px}.book-meta h3{font-size:18px}.book-meta p{font-size:11px}.mini-player{padding-inline:30px;gap:25px}.mini-extras{gap:12px}.app-footer{padding-inline:40px}}
 @media(min-width:1600px){.book-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.topbar{padding-inline:55px}#content{padding:45px 55px}.app-footer{padding-inline:55px}.cover-wrap{max-height:380px}}
+/* Align skip labels with the circular arrows at every player size. */
+.transport .icon-button [data-icon]{display:flex;align-items:center;justify-content:center;line-height:0}
+.transport .icon-button[data-act="back"] small,.transport .icon-button[data-act="forward"] small{top:50%;left:50%;right:auto;margin:0;font-variant-numeric:tabular-nums}
+.transport .icon-button[data-act="back"] small{transform:translate(calc(-50% - 1px),calc(-50% + 1px))}
+.transport .icon-button[data-act="forward"] small{transform:translate(calc(-50% + 1px),calc(-50% + 1px))}
