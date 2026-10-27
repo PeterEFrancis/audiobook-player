@@ -23,6 +23,8 @@ const I = name => `<svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><pat
 const $ = (selector, root = document) => root.querySelector(selector);
 const content = $('#content');
 const modal = $('#modal');
+const activeSeeks = new Set(), pendingSeeks = new WeakMap();
+const isPlaybackSeek = el => ['mini-seek','now-seek'].includes(el?.id);
 let config;
 try { config = JSON.parse(localStorage.getItem('folio.connection') || '{}'); } catch { config = {}; }
 config.servers ||= []; config.libraries ||= [];
@@ -310,7 +312,7 @@ function updatePlayer() {
     const time = $(`#${prefix}-time`), seek = $(`#${prefix}-seek`), play = $(`#${prefix}-play`), total = $(`#${prefix}-duration`);
     if (time) time.textContent = clock(player.elapsed);
     if (total) total.textContent = clock(sumDuration(b));
-    if (seek) { seek.max = sumDuration(b); if (document.activeElement !== seek) seek.value = player.elapsed; }
+    if (seek) { seek.max = sumDuration(b); if (!activeSeeks.has(seek)) seek.value = player.elapsed; }
     if (play) { play.innerHTML = I(player.playing ? 'pause' : 'play'); play.setAttribute('aria-label',player.playing ? 'Pause' : 'Play'); }
   }
   $('#mini-speed').textContent = `${player.speed}×`;
@@ -615,12 +617,35 @@ document.addEventListener('submit',async event=>{
   } catch(error) {toast(error.message,true);if(['manual-connect','server-login','library-connect'].includes(form.id))connectionStatus(`<p class="error">${e(error.message)}</p>`);}
   finally {if(button?.isConnected)button.disabled=false;}
 });
+document.addEventListener('pointerdown',event=>{
+  if(isPlaybackSeek(event.target))activeSeeks.add(event.target);
+});
+document.addEventListener('input',event=>{
+  if(isPlaybackSeek(event.target)) {
+    activeSeeks.add(event.target);
+    pendingSeeks.set(event.target,Number(event.target.value));
+  }
+});
+document.addEventListener('pointerup',()=>{
+  // A changed value stays protected until its native change event commits it.
+  for(const el of activeSeeks)if(!pendingSeeks.has(el))activeSeeks.delete(el);
+});
+document.addEventListener('pointercancel',event=>{
+  if(isPlaybackSeek(event.target)){activeSeeks.delete(event.target);pendingSeeks.delete(event.target);updatePlayer();}
+});
+document.addEventListener('focusout',event=>{
+  if(isPlaybackSeek(event.target))activeSeeks.delete(event.target);
+});
 document.addEventListener('change',async event=>{
   const el=event.target;
   try {
     if(el.id==='server-provider'){clearTimeout(pinTimer);sessionStorage.removeItem('folio.pin');showConnect(el.value);}
     if(el.id==='sort'){sort=el.value;render();}
-    if(['mini-seek','now-seek'].includes(el.id))await player.seek(Number(el.value));
+    if(isPlaybackSeek(el)) {
+      const target=pendingSeeks.get(el) ?? Number(el.value);
+      pendingSeeks.delete(el);activeSeeks.delete(el);
+      try{await player.seek(target);}finally{updatePlayer();}
+    }
     if(el.dataset.setting){settings[el.dataset.setting]=el.type==='checkbox'?el.checked:Number(el.value);await saveSettings();await updateWakeLock();}
     if(['voice-boost','sound-bass','sound-treble'].includes(el.id))player.configureSound({voiceBoost:$('#voice-boost').checked,bass:$('#sound-bass').value,treble:$('#sound-treble').value});
     if(el.id==='volume'){settings.volume=Number(el.value);player.setVolume(el.value);await saveSettings();}
