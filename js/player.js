@@ -97,8 +97,14 @@ export class Player extends EventTarget {
     if (this.listening && this.session) this.session.listened += Math.max(0, (now - this.lastTick) / 1000);
     this.lastTick = now;
   }
-  async open(book, {index, position, autoplay = true, respectSleep = false} = {}) {
+  async open(book, options = {}) {
     const generation = ++this.generation;
+    this.opening = generation;
+    this.nextSource = this.nextPreparation = null;
+    try { return await this.openSource(book, options, generation); }
+    finally { if (this.opening === generation) this.opening = null; }
+  }
+  async openSource(book, {index, position, autoplay = true, respectSleep = false}, generation) {
     if (!book.tracks?.length) throw new Error('This book has no playable audio tracks.');
     await this.persist();
     const saved = await db.get('progress', book.id);
@@ -140,7 +146,60 @@ export class Player extends EventTarget {
     if (previousBookId !== book.id) this.configureSound(saved || this.settings, false);
     this.updateMetadata();
     this.emit();
+    this.opening = null;
+    void this.prepareNext();
     if (autoplay && !this.sleepStopped) await this.play();
+  }
+  prepareNext({force = false} = {}) {
+    const book = this.book, index = this.index + 1, generation = this.generation;
+    if (!book?.tracks[index]) { this.nextSource = this.nextPreparation = null; return Promise.resolve(null); }
+    const current = value => value?.bookId === book.id && value.index === index && value.generation === generation;
+    if (!force && current(this.nextSource)) return Promise.resolve(this.nextSource);
+    if (!force && current(this.nextPreparation)) return this.nextPreparation.promise;
+    this.nextSource = null;
+    const task = {bookId: book.id, index, generation};
+    this.nextPreparation = task;
+    task.promise = (async () => {
+      try {
+        const track = book.tracks[index];
+        const local = await this.downloads.hasTrack(book.id, track.id);
+        const source = local ? this.downloads.audioURL(book.id, track.id) : this.plex.mediaURL(this.getServer(book.serverId), track);
+        if (this.nextPreparation !== task || this.book !== book || this.index + 1 !== index || this.generation !== generation) return null;
+        return this.nextSource = {...task, source, local};
+      } catch { return null; } // A failed look-ahead must not stop the current chapter.
+      finally { if (this.nextPreparation === task) this.nextPreparation = null; }
+    })();
+    return task.promise;
+  }
+  continuePlayback() {
+    const book = this.book, index = this.index + 1, track = book.tracks[index];
+    const prepared = this.nextSource;
+    const ready = prepared?.bookId === book.id && prepared.index === index && prepared.generation === this.generation;
+    const local = (ready && prepared.local) || !navigator.onLine;
+    const source = local ? (ready && prepared.local ? prepared.source : this.downloads.audioURL(book.id, track.id)) : this.plex.mediaURL(this.getServer(book.serverId), track);
+    // Snapshot the finished file, but never wait for storage while iOS is handing off audio.
+    void this.persist().catch(error => this.error(error));
+    const rate = this.speed, volume = this.audio.volume;
+    this.generation++;
+    this.nextSource = this.nextPreparation = null;
+    this.index = index;
+    this.pendingSeek = 0;
+    this.local = local;
+    this.completed = false;
+    this.playbackStarted = false;
+    this.pausedAt = 0;
+    this.progressChanged = true;
+    this.audio.src = source;
+    this.activeSource = this.audio.src;
+    this.audio.playbackRate = rate;
+    this.audio.volume = volume;
+    // Keep the same media element and start in the ended event's task, before any await.
+    const playing = this.audio.play();
+    if (this.context?.state === 'suspended') void this.context.resume().catch(error => this.error(error));
+    this.emit();
+    void this.prepareNext();
+    void this.persist().catch(error => this.error(error));
+    return playing;
   }
   async play() {
     if (!this.book) return;
@@ -233,18 +292,13 @@ export class Player extends EventTarget {
     this.emit();
   }
   async ended() {
-    if (!this.book || this.switching || this.pendingSeek != null) return;
+    if (!this.book || this.switching || this.opening || this.pendingSeek != null || !this.audio.ended || this.completed) return;
     this.accountListening();
     this.listening = false;
-    if (this.sleepStopped) return;
     this.progressChanged = true;
-    if (this.sleep?.type === 'chapter' && this.elapsed >= this.sleep.end - 0.15) {
-      this.sleepStopped = true;
-      this.clearSleep(); this.audio.pause(); await this.persist(); this.emit();
-      this.dispatchEvent(new CustomEvent('sleepend'));
-      return;
-    }
-    if (this.index < this.book.tracks.length - 1) await this.open(this.book, {index: this.index + 1, position: 0, respectSleep: true});
+    this.checkSleep();
+    if (this.sleepStopped) return;
+    if (this.index < this.book.tracks.length - 1) await this.continuePlayback();
     else {
       this.completed = true;
       await this.persist();

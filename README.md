@@ -42,6 +42,8 @@ Pause, resume, and retry preserve **completed tracks**. An interrupted track res
 
 Check the download's complete status before disconnecting. Storage estimates and a persistence request are available, but the browser and operating system control quotas and may evict saved files. Removing a download frees its cached media. Clearing site data removes local downloads and reading data. For long trips, open the installed app and verify downloaded playback in airplane mode first.
 
+Folio prepares the next audio source while a chapter is playing and starts it on the same audio element at the file boundary, without waiting for local progress writes or cache lookups. Downloaded next tracks work offline; speed and sound settings carry over, and sleep timers still stop at their requested boundary. Background continuation is designed for locked-screen and app-switching use, but still needs testing on the target iPhone/iOS version.
+
 ## CarPlay Now Playing
 
 Connect your iPhone to CarPlay, start a book in Folio on the phone, then open **Now Playing** on the car display. If another app is shown, select the current audio source or return to Folio on the phone and press Play.

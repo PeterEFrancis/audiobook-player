@@ -651,6 +651,7 @@ player.addEventListener('complete',async event=>{
 let downloadRender;
 downloads.addEventListener('change',event=>{
   const record=event.detail.record;
+  if(player.book?.id===record.id && (['complete','removed'].includes(record.status) || record.completedTracks!==downloadRecords.get(record.id)?.completedTracks))void player.prepareNext({force:true});
   if(record.status==='removed')downloadRecords.delete(record.id);else downloadRecords.set(record.id,record);
   $('#download-count').textContent=[...downloadRecords.values()].filter(d=>d.status==='complete').length;
   if(record.status==='complete')toast(`“${record.title}” is ready for offline listening.`);
