@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#183f32">
+  <meta name="description" content="Your Plex audiobooks, beautifully at home. Listen, bookmark, and take your library offline with Folio.">
+  <meta name="referrer" content="no-referrer">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Your library · Folio</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./assets/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./assets/icon-192.png">
+  <link rel="stylesheet" href="./css/app.css">
+  <script type="module" src="./js/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to library</a>
+  <div class="sidebar-shade" data-act="menu"></div>
+  <aside class="sidebar" aria-label="Main navigation">
+    <a class="brand" href="./index.html"><span class="brand-mark" aria-hidden="true">f.</span>folio<span class="brand-dot">●</span></a>
+    <div class="sidebar-caption">A GOOD PLACE TO GET LOST</div>
+    <nav>
+      <span class="nav-section">YOUR SPACE</span>
+      <button class="nav-item active" data-view="library"><span data-icon="library"></span>Your library</button>
+      <button class="nav-item" data-view="continue"><span data-icon="headphones"></span>Continue listening</button>
+      <button class="nav-item" data-view="downloads"><span data-icon="download"></span>Downloads<span class="count" id="download-count">0</span></button>
+      <span class="nav-section second">YOUR COLLECTION</span>
+      <button class="nav-item" data-view="reading"><span data-icon="heart"></span>Reading list</button>
+      <button class="nav-item" data-view="bookmarks"><span data-icon="bookmark"></span>Bookmarks</button>
+      <button class="nav-item" data-view="collections"><span data-icon="collection"></span>Collections & authors</button>
+      <button class="nav-item" data-view="history"><span data-icon="history"></span>Listening history</button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="server-label"><span class="status-dot"></span><div><strong id="source-label">The sample shelf</strong><span id="source-detail">Make yourself at home</span></div></div>
+      <button class="nav-item" data-view="settings"><span data-icon="settings"></span>Settings</button>
+      <a class="sidebar-help" href="./index.html#install">Install Folio <span>↗</span></a>
+    </div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar">
+      <div class="app-topline"><button class="app-wordmark" data-view="library" aria-label="Folio library">folio<span>.</span></button><span id="network-label" class="network-label"><span class="status-dot"></span>Online</span><button class="button connect-button" data-act="connect"><span data-icon="plex"></span><span>Connect Plex</span></button><button class="icon-button" data-view="settings" aria-label="Settings"><span data-icon="settings"></span></button></div>
+      <label class="search"><span data-icon="search"></span><input id="search" type="search" placeholder="Books, authors, collections" aria-label="Search library"></label>
+      <span id="view-label" class="desktop-view-label">Library</span>
+    </header>
+    <main id="content" tabindex="-1"><p class="loading">Opening your library…</p></main>
+    <footer class="app-footer"><span>Made for getting lost in a good book.</span><span>YOUR LIBRARY. YOUR PACE.</span></footer>
+  </div>
+  <section class="mini-player" id="mini-player" aria-label="Audio player" hidden>
+    <button class="mini-book" data-act="now-playing"><img id="mini-cover" alt=""><span><strong id="mini-title"></strong><small id="mini-author"></small></span></button>
+    <div class="mini-center"><div class="transport"><button class="icon-button" data-act="back" aria-label="Rewind 15 seconds"><span data-icon="back"></span><small>15</small></button><button class="play-button" data-act="toggle" aria-label="Play" id="mini-play"><span data-icon="play"></span></button><button class="icon-button" data-act="forward" aria-label="Forward 30 seconds"><span data-icon="forward"></span><small>30</small></button></div><div class="scrubber"><span id="mini-time">0:00</span><input id="mini-seek" type="range" min="0" max="100" value="0" step="0.1" aria-label="Book playback position"><span id="mini-duration">0:00</span></div></div>
+    <div class="mini-extras"><button class="text-button" data-act="speed" id="mini-speed">1×</button><button class="icon-button" data-act="sleep" aria-label="Sleep timer"><span data-icon="moon"></span></button><button class="icon-button" data-act="add-bookmark" aria-label="Add bookmark"><span data-icon="bookmark"></span></button><button class="icon-button" data-act="now-playing" aria-label="Expand player"><span data-icon="expand"></span></button></div>
+  </section>
+  <nav class="bottom-tabs" aria-label="Main tabs">
+    <button class="active" data-view="library"><span data-icon="library"></span><span>Library</span></button>
+    <button data-view="downloads"><span data-icon="download"></span><span>Downloads</span></button>
+    <button data-view="reading"><span data-icon="heart"></span><span>Reading list</span></button>
+    <button data-view="settings"><span data-icon="more"></span><span>More</span></button>
+  </nav>
+  <dialog id="modal" class="modal"><div id="modal-content"></div></dialog>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <noscript><p>Folio needs JavaScript to connect to Plex and play your audiobooks.</p></noscript>
+</body>
+</html>

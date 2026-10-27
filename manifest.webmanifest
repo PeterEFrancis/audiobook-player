@@ -1,0 +1,24 @@
+{
+  "id": "./app.html",
+  "name": "Folio — Audiobook Player",
+  "short_name": "Folio",
+  "description": "Your Plex audiobooks, with offline listening, chapters, and bookmarks.",
+  "lang": "en",
+  "start_url": "./app.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f7f5f0",
+  "theme_color": "#183f32",
+  "categories": ["books", "music", "entertainment"],
+  "icons": [
+    { "src": "./assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "./assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Your library", "url": "./app.html" },
+    { "name": "Downloads", "url": "./app.html#downloads" }
+  ]
+}
