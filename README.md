@@ -42,6 +42,12 @@ Pause, resume, and retry preserve **completed tracks**. An interrupted track res
 
 Check the download's complete status before disconnecting. Storage estimates and a persistence request are available, but the browser and operating system control quotas and may evict saved files. Removing a download frees its cached media. Clearing site data removes local downloads and reading data. For long trips, open the installed app and verify downloaded playback in airplane mode first.
 
+## CarPlay Now Playing
+
+Connect your iPhone to CarPlay, start a book in Folio on the phone, then open **Now Playing** on the car display. If another app is shown, select the current audio source or return to Folio on the phone and press Play.
+
+Folio supplies the book title, author, cover, playback position, and media controls to iOS. Play/pause, back 15 seconds, forward 30 seconds, previous/next chapter, and scrubbing are available where iOS and your vehicle expose them. The visible buttons and background playback behavior depend on the browser, iOS, and vehicle; verify operation while parked. Folio has no dedicated CarPlay icon or dashboard library browser. [Apple describes the shared Now Playing experience](https://developer.apple.com/videos/play/wwdc2017/719/).
+
 ## Reading state and privacy
 
 Server connection details and access tokens stay in this browser's `localStorage`. Metadata, progress, bookmarks, listening history, download records, and pending sync work use IndexedDB; downloaded media uses Cache Storage. Requests go directly to your server; Plex sign-in also uses Plex’s authentication service. There is no Folio backend, account service, or analytics service, and no credential belongs in this repository or deployment configuration.
@@ -65,7 +71,8 @@ Older Jellyfin versions can use playback-session reports when the direct progres
 | Offline queue, pause/resume, storage management | Supported; background transfers use Background Fetch where available |
 | Voice boost, bass and treble | Requires browser Web Audio support |
 | Lock-screen and headset controls, background playback | Browser and OS dependent |
-| CarPlay, Apple Watch, Siri shortcuts, native widgets | Not implemented |
+| CarPlay shared Now Playing controls | Browser, iOS, and vehicle dependent; start playback on the phone |
+| Dedicated CarPlay app/library, Apple Watch, Siri shortcuts, native widgets | Not implemented |
 | iCloud sync, cloud bookmarks, transcript or EPUB read-along | Not implemented |
 | Silence removal, native casting integrations, guaranteed background downloads | Not implemented |
 

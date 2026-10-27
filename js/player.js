@@ -36,7 +36,8 @@ export class Player extends EventTarget {
       this.listening = true;
       this.playbackStarted = true;
       this.progressChanged = true;
-      if (navigator.mediaSession) navigator.mediaSession.playbackState = 'playing';
+      this.setupMediaSession();
+      this.mediaMetadataKey = null;
       this.emit();
     });
     this.audio.addEventListener('pause', () => {
@@ -46,7 +47,6 @@ export class Player extends EventTarget {
       if (this.playbackStarted) this.progressChanged = true;
       this.playbackStarted = false;
       if (!this.switching) this.pausedAt = Date.now();
-      if (navigator.mediaSession) navigator.mediaSession.playbackState = 'paused';
       if (!this.switching) this.persist().catch(e => this.error(e));
       this.emit();
     });
@@ -67,9 +67,23 @@ export class Player extends EventTarget {
   get speed() { return this.audio.playbackRate; }
   emit() {
     this.dispatchEvent(new CustomEvent('change'));
-    const duration = this.audio.duration;
-    if (navigator.mediaSession?.setPositionState && Number.isFinite(duration) && duration > 0) {
-      try { navigator.mediaSession.setPositionState({duration, playbackRate: this.speed, position: Math.min(this.position, duration)}); } catch {}
+    this.updateMediaSession();
+  }
+  updateMediaSession() {
+    const session = navigator.mediaSession;
+    if (!session) return;
+    try { session.playbackState = this.book ? this.playing && !this.audio.ended ? 'playing' : 'paused' : 'none'; } catch {}
+    if (!this.book) {
+      this.mediaMetadataKey = null;
+      try { session.metadata = null; session.setPositionState?.(); } catch {}
+      return;
+    }
+    this.updateMetadata();
+    const duration = sumDuration(this.book);
+    if (session.setPositionState && Number.isFinite(duration) && duration > 0 && Number.isFinite(this.elapsed) && this.speed > 0) {
+      try { session.setPositionState({duration, playbackRate: this.speed, position: Math.max(0, Math.min(this.elapsed, duration))}); } catch {}
+    } else {
+      try { session.setPositionState?.(); } catch {}
     }
   }
   error(error) { this.dispatchEvent(new CustomEvent('error', {detail: error})); }
@@ -130,6 +144,7 @@ export class Player extends EventTarget {
   }
   async play() {
     if (!this.book) return;
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
     this.sleepStopped = false;
     if (this.pendingSeek == null && (this.completed || this.audio.ended)) {
       const index = !this.completed && this.index < this.book.tracks.length - 1 ? this.index + 1 : 0;
@@ -285,14 +300,28 @@ export class Player extends EventTarget {
     if (activate) this.persist({preferencesOnly: true}).catch(e => this.error(e));
   }
   updateMetadata() {
-    if (!navigator.mediaSession || !window.MediaMetadata) return;
-    navigator.mediaSession.metadata = new MediaMetadata({title: this.track.title || this.book.title, artist: this.book.author, album: this.book.title, artwork: [{src: new URL(this.artworkURL(this.book), location.href).href}]});
+    if (!this.book || !this.track || !navigator.mediaSession || !window.MediaMetadata) return;
+    const chapter = this.track.chapters?.findLast(chapter => (chapter.start || 0) <= this.position);
+    const album = chapter?.title || this.track.title || this.book.title;
+    const src = new URL(this.artworkURL(this.book) || './assets/icon-512.png', location.href).href;
+    const key = JSON.stringify([this.book.id, this.book.title, this.book.author, album, src]);
+    if (key === this.mediaMetadataKey) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({title: this.book.title, artist: this.book.author, album, artwork: [{src}]});
+      this.mediaMetadataKey = key;
+    } catch {} // Unsupported system metadata must not interrupt audiobook playback.
   }
   setupMediaSession() {
     if (!navigator.mediaSession) return;
-    const actions = {play: () => this.play(), pause: () => this.audio.pause(), seekbackward: d => this.skip(-(d.seekOffset || 15)), seekforward: d => this.skip(d.seekOffset || 30), previoustrack: () => this.chapter(-1), nexttrack: () => this.chapter(1), seekto: d => { if (this.book && Number.isFinite(d.seekTime)) return this.seek(absolutePosition(this.book, this.index, d.seekTime)); }};
+    const pause = async () => { this.audio.pause(); await this.persist(); this.emit(); };
+    const actions = {play: () => this.play(), pause, stop: pause, seekbackward: d => this.skip(-(d.seekOffset || 15)), seekforward: d => this.skip(d.seekOffset || 30), previoustrack: () => this.chapter(-1), nexttrack: () => this.chapter(1), seekto: d => { if (this.book && Number.isFinite(d.seekTime)) return this.seek(d.seekTime); }};
     for (const [action, handler] of Object.entries(actions)) {
-      try { navigator.mediaSession.setActionHandler(action, d => Promise.resolve(handler(d)).catch(e => this.error(e))); } catch {}
+      try {
+        navigator.mediaSession.setActionHandler(action, details => {
+          try { return Promise.resolve(handler(details || {})).catch(error => this.error(error)); }
+          catch (error) { this.error(error); }
+        });
+      } catch {}
     }
   }
 }
