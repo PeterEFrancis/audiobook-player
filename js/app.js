@@ -5,6 +5,7 @@ import { DownloadManager } from './downloads.js';
 import { Player } from './player.js';
 import { demoBooks } from './demo.js';
 import { removeLegacySamples } from './sample-migration.js';
+import { bindBookSheet } from './book-sheet.js';
 import { escapeHTML as e, clock, duration, bytes, sumDuration, chaptersFor } from './utils.js';
 
 const paths = {
@@ -23,6 +24,8 @@ const I = name => `<svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><pat
 const $ = (selector, root = document) => root.querySelector(selector);
 const content = $('#content');
 const modal = $('#modal');
+const resetBookSheet = bindBookSheet(modal);
+let modalVersion = 0;
 const activeSeeks = new Set(), pendingSeeks = new WeakMap();
 const isPlaybackSeek = el => ['mini-seek','now-seek'].includes(el?.id);
 let config;
@@ -202,9 +205,11 @@ function render() {
 }
 function navigate(target) { view = labels[target] ? target : 'library'; group = null; filter = 'all'; query = ''; $('#search').value = ''; location.hash = view; document.body.classList.remove('nav-open'); render(); window.scrollTo(0,0); }
 function showModal(title, html, className = '') {
+  modalVersion++;
+  resetBookSheet();
   modal.className = `modal ${className}`;
   modal.setAttribute('aria-label',title || 'Book details');
-  $('#modal-content').innerHTML = `<div class="modal-content"><div class="modal-header">${title ? `<h2>${title}</h2>` : ''}<button class="icon-button" data-act="close" aria-label="Close dialog">${I('close')}</button></div>${html}</div>`;
+  $('#modal-content').innerHTML = `<div class="modal-content">${className === 'book-modal' ? '<button type="button" class="modal-handle" data-act="close" aria-label="Close book details"></button>' : ''}<div class="modal-header">${title ? `<h2>${title}</h2>` : ''}<button class="icon-button" data-act="close" aria-label="Close dialog">${I('close')}</button></div>${html}</div>`;
   if (!modal.open) modal.showModal();
 }
 async function stopCurrentBook(id, save = true) {
@@ -291,11 +296,13 @@ async function playBook(id, options) {
 async function showDetail(id, tab = 'chapters') {
   const original = books.find(b => b.id === id); if (!original) throw new Error('Book not found.');
   detailBook = id;
-  if (!original.tracks?.length) showModal('Book details', '<p class="loading">Loading chapters…</p>');
+  if (!original.tracks?.length) showModal('Book details', '<p class="loading">Loading chapters…</p>', 'book-modal');
+  const version = ++modalVersion;
   let book = original, trackError;
   try { book = await ensureBook(id); } catch(error) { trackError = error.message; }
+  if (version !== modalVersion) return;
   const p = progress.get(id), d = downloadRecords.get(id);
-  showModal('', `<div class="detail-hero">${image(book)}<div><p class="eyebrow">${book.demo ? 'LIBRIVOX · FREE AUDIOBOOK' : `FROM YOUR ${providerName(getServer(book.serverId)).toUpperCase()} LIBRARY`}</p><h3>${e(book.title)}</h3><p>${e(book.author)}${book.year ? ` · ${book.year}` : ''}</p><p>${duration(sumDuration(book))} · ${book.tracks?.length || book.leafCount || '—'} audio files</p><div class="detail-actions"><button class="button" data-act="play-book" data-id="${e(id)}">${I('play')}${p?.elapsed && !p.completed ? 'Continue' : 'Play'}</button><button class="button secondary" data-act="${d?.status === 'complete' ? 'remove-download' : 'download'}" data-id="${e(id)}">${I('download')}${d?.status === 'complete' ? 'Remove download' : d && d.status !== 'error' ? d.status === 'paused' ? 'Resume download' : d.status : 'Download'}</button></div></div></div><div class="chips">${book.genres?.length ? `<span class="book-tags">${book.genres.map(g=>e(g)).join(', ')}</span>` : ''}${p?.completed ? '<span class="chip">Finished</span>' : ''}</div>${book.summary?.trim() ? `<p>${e(book.summary)}</p>` : ''}${book.demo && book.narrator ? `<p>Read by <strong>${e(book.narrator)}</strong> · <a href="${e(book.sourceURL)}" target="_blank" rel="noopener noreferrer">LibriVox recording ↗</a> · <a href="${e(book.archiveURL)}" target="_blank" rel="noopener noreferrer">Original audio ↗</a><br><small>${e(book.license)}. Full recording, ${book.recordingYear}.</small></p>` : ''}<div class="form-row"><button class="button outline" data-act="reading" data-id="${e(id)}">${I('heart')}${reading.includes(id) ? 'On your reading list' : 'Read later'}</button><button class="button outline" data-act="queue" data-id="${e(id)}">${I('queue')} Add to queue</button><button class="text-button" data-act="mark-finished" data-id="${e(id)}">${p?.completed ? 'Mark unplayed' : 'Mark finished'}</button></div>${trackError ? `<p class="error">${e(trackError)}</p>` : ''}<div class="detail-tabs"><button class="${tab === 'chapters' ? 'active' : ''}" data-act="detail-tab" data-value="chapters">Chapters</button><button class="${tab === 'bookmarks' ? 'active' : ''}" data-act="detail-tab" data-value="bookmarks">Bookmarks</button></div>${tab === 'chapters' ? `<div class="chapter-list">${chaptersFor(book).map((c,n) => `<button class="chapter-item ${player.book?.id === id && player.index === c.index && player.position >= c.position && player.position < c.position+c.duration ? 'active' : ''}" data-act="play-chapter" data-id="${e(id)}" data-index="${c.index}" data-position="${c.position}"><span>${String(n+1).padStart(2,'0')}</span><strong>${e(c.title)}</strong><small>${clock(c.duration)}</small></button>`).join('')}</div>` : bookmarks.filter(b => b.bookId === id).map(bookmarkRow).join('') || '<p>No bookmarks in this book yet.</p>'}`);
+  showModal('', `<div class="detail-hero">${image(book)}<div><p class="eyebrow">${book.demo ? 'LIBRIVOX · FREE AUDIOBOOK' : `FROM YOUR ${providerName(getServer(book.serverId)).toUpperCase()} LIBRARY`}</p><h3>${e(book.title)}</h3><p>${e(book.author)}${book.year ? ` · ${book.year}` : ''}</p><p>${duration(sumDuration(book))} · ${book.tracks?.length || book.leafCount || '—'} audio files</p><div class="detail-actions"><button class="button" data-act="play-book" data-id="${e(id)}">${I('play')}${p?.elapsed && !p.completed ? 'Continue' : 'Play'}</button><button class="button secondary" data-act="${d?.status === 'complete' ? 'remove-download' : 'download'}" data-id="${e(id)}">${I('download')}${d?.status === 'complete' ? 'Remove download' : d && d.status !== 'error' ? d.status === 'paused' ? 'Resume download' : d.status : 'Download'}</button></div></div></div><div class="chips">${book.genres?.length ? `<span class="book-tags">${book.genres.map(g=>e(g)).join(', ')}</span>` : ''}${p?.completed ? '<span class="chip">Finished</span>' : ''}</div>${book.summary?.trim() ? `<p>${e(book.summary)}</p>` : ''}${book.demo && book.narrator ? `<p>Read by <strong>${e(book.narrator)}</strong> · <a href="${e(book.sourceURL)}" target="_blank" rel="noopener noreferrer">LibriVox recording ↗</a> · <a href="${e(book.archiveURL)}" target="_blank" rel="noopener noreferrer">Original audio ↗</a><br><small>${e(book.license)}. Full recording, ${book.recordingYear}.</small></p>` : ''}<div class="form-row"><button class="button outline" data-act="reading" data-id="${e(id)}">${I('heart')}${reading.includes(id) ? 'On your reading list' : 'Read later'}</button><button class="button outline" data-act="queue" data-id="${e(id)}">${I('queue')} Add to queue</button><button class="text-button" data-act="mark-finished" data-id="${e(id)}">${p?.completed ? 'Mark unplayed' : 'Mark finished'}</button></div>${trackError ? `<p class="error">${e(trackError)}</p>` : ''}<div class="detail-tabs"><button class="${tab === 'chapters' ? 'active' : ''}" data-act="detail-tab" data-value="chapters">Chapters</button><button class="${tab === 'bookmarks' ? 'active' : ''}" data-act="detail-tab" data-value="bookmarks">Bookmarks</button></div>${tab === 'chapters' ? `<div class="chapter-list">${chaptersFor(book).map((c,n) => `<button class="chapter-item ${player.book?.id === id && player.index === c.index && player.position >= c.position && player.position < c.position+c.duration ? 'active' : ''}" data-act="play-chapter" data-id="${e(id)}" data-index="${c.index}" data-position="${c.position}"><span>${String(n+1).padStart(2,'0')}</span><strong>${e(c.title)}</strong><small>${clock(c.duration)}</small></button>`).join('')}</div>` : bookmarks.filter(b => b.bookId === id).map(bookmarkRow).join('') || '<p>No bookmarks in this book yet.</p>'}`, 'book-modal');
   modal.setAttribute('aria-label',book.title);
 }
 function showNowPlaying() {
@@ -655,6 +662,7 @@ document.addEventListener('change',async event=>{
   }catch(error){toast(error.message,true);}
 });
 $('#search').addEventListener('input',event=>{query=event.target.value;render();});
+modal.addEventListener('close',()=>{modalVersion++;});
 modal.addEventListener('click',event=>{if(event.target===modal){const rect=modal.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)modal.close();}});
 document.addEventListener('keydown',event=>{
   if(event.target.closest('input,textarea,select,[contenteditable]'))return;
