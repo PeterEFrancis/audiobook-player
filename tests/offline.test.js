@@ -82,8 +82,8 @@ test('out-of-bounds and empty suffix ranges return 416 with the stored size', as
 
 test('offline navigation selects the landing or app shell within a GitHub Pages subpath', async () => {
   const app = worker();
-  await app.cache('folio-shell-v11').put('index.html', new Response('Landing page'));
-  await app.cache('folio-shell-v11').put('app.html', new Response('Audiobook player'));
+  await app.cache('folio-shell-v12').put('index.html', new Response('Landing page'));
+  await app.cache('folio-shell-v12').put('app.html', new Response('Audiobook player'));
   assert.equal(await (await app.request('./', { mode: 'navigate' })).text(), 'Landing page');
   assert.equal(await (await app.request('index.html', { mode: 'navigate' })).text(), 'Landing page');
   assert.equal(await (await app.request('app.html?book=example', { mode: 'navigate' })).text(), 'Audiobook player');
@@ -92,6 +92,8 @@ test('offline navigation selects the landing or app shell within a GitHub Pages 
 test('Plex credentials, authenticated requests, and other origins bypass service-worker caching', async () => {
   const app = worker();
   assert.equal(await app.request('app.html?X-Plex-Token=private-token'), undefined);
+  assert.equal(await app.request('app.html?ApiKey=private-token'), undefined);
+  assert.equal(await app.request('app.html?api_key=private-token'), undefined);
   assert.equal(await app.request('app.html', { headers: { Authorization: 'Bearer private-token' } }), undefined);
   assert.equal(await app.request('https://plex.example/library/parts/1?X-Plex-Token=private-token'), undefined);
   assert.equal(await app.request('https://example.com/unrelated/app.html'), undefined);

@@ -1,11 +1,11 @@
 importScripts('js/background-downloads-sw.js');
-const SHELL_CACHE = 'folio-shell-v11';
+const SHELL_CACHE = 'folio-shell-v12';
 const MEDIA_CACHE = 'folio-media-v1';
 const ROOT = new URL(self.registration.scope);
 const SHELL = [
   './', 'index.html', 'app.html', 'css/app.css', 'css/landing.css',
   'js/app.js', 'js/player.js', 'js/plex.js', 'js/db.js', 'js/downloads.js',
-  'js/demo.js', 'js/install.js', 'js/utils.js', 'js/plex-progress.js', 'js/background-downloads-sw.js', 'manifest.webmanifest',
+  'js/demo.js', 'js/install.js', 'js/utils.js', 'js/plex-progress.js', 'js/servers.js', 'js/server-http.js', 'js/audiobookshelf.js', 'js/jellyfin.js', 'js/background-downloads-sw.js', 'manifest.webmanifest',
   'assets/icon.svg', 'assets/icon-192.png', 'assets/icon-512.png', 'assets/icon-maskable.png',
   'assets/cover-walden.svg', 'assets/cover-sea.svg', 'assets/cover-pride.svg', 'assets/cover-sherlock.svg',
 ];
@@ -81,7 +81,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   if (url.origin !== ROOT.origin || !url.pathname.startsWith(ROOT.pathname)) return;
   // Plex credentials and authenticated requests never enter the shell cache.
-  if ([...url.searchParams.keys()].some(key => /token|authorization/i.test(key)) || request.headers.has('Authorization')) return;
+  if ([...url.searchParams.keys()].some(key => /token|authorization|api_?key/i.test(key)) || request.headers.has('Authorization')) return;
   const path = url.pathname.slice(ROOT.pathname.length);
   if ((request.method === 'GET' || request.method === 'HEAD') && (path.startsWith('offline-audio/') || path.startsWith('offline-art/'))) {
     event.respondWith(offlineMedia(request));

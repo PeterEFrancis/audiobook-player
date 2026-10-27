@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "A private, offline-first Plex audiobook PWA",
+  "description": "An offline-first audiobook PWA for Plex, Audiobookshelf, Jellyfin, and Emby",
   "scripts": {
     "dev": "python3 -m http.server 4173 --bind 127.0.0.1",
     "test": "node --test tests/*.test.js"

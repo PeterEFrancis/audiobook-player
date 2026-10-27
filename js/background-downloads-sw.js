@@ -66,7 +66,7 @@
       throw error;
     }
     if (response?.status !== 200 || !response.body || response.type === 'opaque' || /^(text\/(html|xml)|application\/(?:[^;]+\+)?(?:json|xml))(?:;|$)/i.test(type)) {
-      throw new DownloadError('Plex did not return a complete audio file. Reconnect and resume.');
+      throw new DownloadError('The server did not return a complete audio file. Reconnect and resume.');
     }
     const expected = positive(response.headers.get('Content-Length'));
     const encoding = response.headers.get('Content-Encoding');
@@ -78,7 +78,7 @@
         try {
           const { value, done } = await reader.read();
           if (done) {
-            if (!bytes || (verifyLength && bytes !== expected)) throw new DownloadError('Plex returned an incomplete audio file. Resume to retry.');
+            if (!bytes || (verifyLength && bytes !== expected)) throw new DownloadError('The server returned an incomplete audio file. Resume to retry.');
             controller.close();
           } else {
             bytes += value.byteLength;
@@ -145,7 +145,7 @@
           backgroundUnavailable ||= error.backgroundUnavailable === true;
           failure = error.name === 'QuotaExceededError'
             ? 'Device storage is full. Remove a download or free space, then resume.'
-            : error instanceof DownloadError ? error.message : 'The background download failed. Reconnect to Plex and resume.';
+            : error instanceof DownloadError ? error.message : 'The background download failed. Reconnect to your server and resume.';
         }
       }
     }
@@ -169,7 +169,7 @@
     await save(bookId, id, {
       ...summary, status,
       ...(finished ? { totalBytes: summary.bytes } : {}),
-      error: status === 'error' ? failure || 'The background download did not finish. Reconnect to Plex and resume.' : null,
+      error: status === 'error' ? failure || 'The background download did not finish. Reconnect to your server and resume.' : null,
       backgroundUnavailable: status === 'error' && backgroundUnavailable,
       backgroundId: null, backgroundFiles: null, backgroundArtwork: null, backgroundSavingAt: null,
     });

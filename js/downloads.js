@@ -216,7 +216,7 @@ export class DownloadManager extends EventTarget {
       const cacheURL = this.audioURL(book.id, track.id);
       const saved = await cache.match(cacheURL);
       if (isComplete(saved)) trackBytes[track.id] = positive(record.trackBytes[track.id]) || positive(saved.headers.get('Content-Length')) || positive(track.size);
-      else files.push({ url: await this.plex.mediaURL(server, track), cacheURL, trackId: track.id, mime: track.mime, title: track.title });
+      else files.push({ url: await (this.plex.downloadURL || this.plex.mediaURL)(server, track), cacheURL, trackId: track.id, mime: track.mime, title: track.title });
     }
     if (!files.length) return false;
     let artwork;
@@ -271,7 +271,7 @@ export class DownloadManager extends EventTarget {
             const aborted = job.controller.signal.aborted || error.name === 'AbortError';
             const message = error.name === 'QuotaExceededError'
               ? 'Device storage is full. Remove a download or free space, then resume.'
-              : (error.message || 'Download failed. Reconnect to your Plex server and resume.');
+              : (error.message || 'Download failed. Reconnect to your server and resume.');
             await this._save({ ...record, status: aborted ? 'paused' : 'error', error: aborted ? null : message });
           }
         } finally {
@@ -300,7 +300,7 @@ export class DownloadManager extends EventTarget {
     let server;
     const getServer = async () => {
       if (!server) server = await this.getServer(book.serverId);
-      if (!server) throw new Error('Reconnect to this book’s Plex server to resume its download.');
+      if (!server) throw new Error('Reconnect to this book’s server to resume its download.');
       return server;
     };
 
@@ -317,7 +317,7 @@ export class DownloadManager extends EventTarget {
         await this._save(record);
         continue;
       }
-      const mediaURL = await this.plex.mediaURL(await getServer(), track);
+      const mediaURL = await (this.plex.downloadURL || this.plex.mediaURL)(await getServer(), track);
       const response = await fetch(mediaURL, { signal, cache: 'no-store', credentials: 'omit' });
       const contentType = response.headers.get('Content-Type') || track.mime || 'audio/mpeg';
       if (response.status !== 200 || !response.body || response.type === 'opaque') {
@@ -325,7 +325,7 @@ export class DownloadManager extends EventTarget {
       }
       if (/^(text\/(html|xml)|application\/(json|xml))/i.test(contentType)) {
         await response.body.cancel();
-        throw new Error('The server returned a login page or error instead of audio. Reconnect to Plex and resume.');
+        throw new Error('The server returned a login page or error instead of audio. Reconnect to your server and resume.');
       }
       const expected = positive(response.headers.get('Content-Length'));
       if (expected) sizes.set(String(track.id), expected);

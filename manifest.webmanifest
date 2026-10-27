@@ -2,7 +2,7 @@
   "id": "./app.html",
   "name": "Folio — Audiobook Player",
   "short_name": "Folio",
-  "description": "Your Plex audiobooks, with offline listening, chapters, and bookmarks.",
+  "description": "Your Plex, Audiobookshelf, Jellyfin, and Emby audiobooks, with offline listening, chapters, and bookmarks.",
   "lang": "en",
   "start_url": "./app.html",
   "scope": "./",

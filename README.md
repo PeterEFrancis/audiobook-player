@@ -1,6 +1,6 @@
 # Folio
 
-A responsive, installable audiobook player for your Plex music library, with offline downloads. Phones use bottom tabs, touch controls, bottom sheets, and a full-screen listening view. Computers use a wider layout with a sidebar and expanded shelves and controls. `index.html` is the separate public information and installation page; `app.html` opens the app. Folio is inspired by audiobook apps such as Prologue and is not affiliated with Prologue or Plex.
+A responsive, installable audiobook player for Plex, Audiobookshelf, Jellyfin, and Emby, with offline downloads. Phones use bottom tabs, touch controls, bottom sheets, and a full-screen listening view. Computers use a wider layout with a sidebar and expanded shelves and controls. `index.html` is the separate public information and installation page; `app.html` opens the app. Folio is inspired by audiobook apps such as Prologue and is not affiliated with Prologue or the supported server projects.
 
 ## Run locally
 
@@ -12,19 +12,29 @@ npm run dev
 
 Open [the landing page](http://127.0.0.1:4173/) or [the player](http://127.0.0.1:4173/app.html). Run `npm test` for the focused automated checks. There are no npm dependencies and no `npm install` or build step. Serve the files over HTTP locally or HTTPS in production; opening them with `file://` does not provide a working PWA.
 
-## Connect Plex
+## Connect a server
+
+In **More**, choose the server type when adding a connection. Plex sign-in and automatic server discovery remain available. Audiobookshelf, Jellyfin, and Emby use a server URL with a username and password or an access token. Authentication happens directly with the selected server.
+
+| Server | Library setup |
+| --- | --- |
+| Plex | Music library with each audiobook as an album, its author as the artist, and numbered audio tracks |
+| Audiobookshelf | Book library containing audiobooks |
+| Jellyfin / Emby | Music albums or standalone audio/audiobook items; ebook-only Book folders are excluded |
+
+### Plex setup
 
 1. Create a **Music** library in Plex Media Server. Organize each audiobook as an album, its author as the artist, and its audio files as numbered tracks. Set disc numbers for books spanning multiple discs. Embedded chapters are supported when Plex exposes them in track metadata.
 2. Open Folio, sign in through the Plex authentication page, select a server, and choose your audiobook library. Folio never handles your Plex password. Alternatively, enter a complete HTTPS server URL and its Plex access token in the manual connection form.
-3. Refresh the library after adding or changing books in Plex. Open a book to retrieve its tracks and chapters.
+3. Refresh the library after adding or changing books on your server. Open a book to retrieve its tracks and chapters.
 
 On iPhone or iPad, open the site in Safari and use **Share → Add to Home Screen**, then launch the installed app **before signing in**. The installed app can have separate storage from a browser tab. On desktop and Android, use the browser's install option when available. Installation downloads a web app, not a native application or audiobook collection.
 
-The server must be reachable from your device with a valid HTTPS certificate and browser-compatible CORS responses. Plex's secure `plex.direct` connections are supported; check secure connections and remote access in Plex if discovery succeeds but connection fails. Manual HTTP connections are limited to localhost development while the page itself uses HTTP. A GitHub Pages HTTPS site cannot connect to an ordinary HTTP LAN server.
+All providers must be reachable from your device with a valid HTTPS certificate and browser-compatible CORS responses. Use the complete server URL, including any configured base path. If a server or reverse proxy blocks cross-origin requests, configure it to allow the Folio site’s origin and the authentication headers used by its API. Folio has no backend proxy. Plex's secure `plex.direct` connections are supported; check secure connections and remote access in Plex if discovery succeeds but connection fails. Manual HTTP connections are limited to localhost development while the page itself uses HTTP. A GitHub Pages HTTPS site cannot connect to an ordinary HTTP LAN server.
 
 ## Offline listening
 
-Download a book while connected to Plex. In browsers that support Background Fetch (including Chrome and Edge), Folio asks the browser to manage the transfer, so it can continue after you switch apps or close Folio. The browser may request permission or show download controls. Folio saves completed audio for offline playback in its service worker.
+Download a book while connected to its server. In browsers that support Background Fetch (including Chrome and Edge), Folio asks the browser to manage the transfer, so it can continue after you switch apps or close Folio. The browser may request permission or show download controls. Folio saves completed audio for offline playback in its service worker.
 
 Safari and iPhone/iPad PWAs do not support Background Fetch. On those devices, or if background downloads are denied, Folio uses a foreground queue: keep the app open and the device awake until the book is marked complete. The Downloads screen identifies the mode being used. A service worker alone cannot guarantee long transfers while the app is suspended.
 
@@ -34,17 +44,20 @@ Check the download's complete status before disconnecting. Storage estimates and
 
 ## Reading state and privacy
 
-Plex credentials stay in this browser's `localStorage`. Metadata, progress, bookmarks, listening history, download records, and pending sync work use IndexedDB; downloaded media uses Cache Storage. Requests go directly to Plex and your server. There is no Folio backend, account service, or analytics service, and no credential belongs in this repository or deployment configuration.
+Server connection details and access tokens stay in this browser's `localStorage`. Metadata, progress, bookmarks, listening history, download records, and pending sync work use IndexedDB; downloaded media uses Cache Storage. Requests go directly to your server; Plex sign-in also uses Plex’s authentication service. There is no Folio backend, account service, or analytics service, and no credential belongs in this repository or deployment configuration.
 
-Sync works in both directions. Connecting, launching, refreshing, returning to the app, and periodic checks while it is open import Plex's played/unplayed status and resume positions across the library. Starting playback also checks the selected book's latest progress. Remote changes appear in the bookshelf, Finished filter, and Continue listening, including books never opened in Folio. Opening a paused book does not send a playback update.
+Sync works in both directions. Connecting, launching, refreshing, returning to the app, and periodic checks while it is open import the connected server’s played/unplayed status and resume positions across the library. Starting playback also checks the selected book's latest progress. Remote changes appear in the bookshelf, Finished filter, and Continue listening, including books never opened in Folio. Opening a paused book does not send a playback update.
 
-Playback sends per-track position updates and finished/played changes back to Plex. Offline changes retry when connected; the pending queue retains the latest position per book and sends changes in order. Unsynced local progress takes precedence, and incoming refreshes never interrupt active playback. When local changes are synced, fresh Plex snapshots can restore another client's progress or unplayed resets, even when a reset leaves the old Plex timestamp intact. Bookmarks, lists, and listening history stay on this device; use the token-free JSON backup and restore controls to move reading data between devices. Audio files are not included in backups.
+Playback sends position updates and finished/played changes back to the matching server. Plex uses track positions, Jellyfin and Emby use item playback progress, and Audiobookshelf uses whole-book progress. Offline changes retry when connected; the pending queue retains the latest position per book and sends changes in order. Unsynced local progress takes precedence, and incoming refreshes never interrupt active playback. When local changes are synced, fresh server snapshots can restore another client’s progress or unplayed resets. Bookmarks, lists, and listening history stay on this device; use the token-free JSON backup and restore controls to move reading data between devices. Audio files are not included in backups.
+
+Older Jellyfin versions can use playback-session reports when the direct progress API is unavailable. Folio confirms the stored position before clearing a queued checkpoint; if the server cannot retain it, the local checkpoint stays pending and More shows the sync error.
 
 ## Features and platform limits
 
 | Capability | Folio |
 | --- | --- |
-| Plex libraries, search, sorting, authors, collections | Supported |
+| Plex, Audiobookshelf, Jellyfin, and Emby libraries | Supported |
+| Search, sorting, authors, collections | Supported where supplied by the server |
 | Continuous playback, track and embedded chapters, whole-book seeking | Supported |
 | Playback speed, configurable skips, smart rewind | Supported |
 | Sleep timer, end-of-chapter sleep, fade-out | Supported |
@@ -56,13 +69,13 @@ Playback sends per-track position updates and finished/played changes back to Pl
 | iCloud sync, cloud bookmarks, transcript or EPUB read-along | Not implemented |
 | Silence removal, native casting integrations, guaranteed background downloads | Not implemented |
 
-Folio streams and downloads original files; it does not transcode. MP3 and AAC in M4A/M4B are common browser-compatible choices. Other codecs depend on the device and browser. A downloaded file still needs a supported codec. Native audiobook apps can provide OS integrations that a PWA cannot reproduce; Folio does not claim complete feature parity.
+Folio streams and downloads original files from all providers; it does not transcode. A server’s own clients may support formats that the browser cannot play directly. MP3 and AAC in M4A/M4B are common browser-compatible choices. Other codecs depend on the device and browser. A downloaded file still needs a supported codec. Native audiobook apps can provide OS integrations that a PWA cannot reproduce; Folio does not claim complete feature parity.
 
 The included demo contains four short public-domain literary excerpts narrated with the synthetic Samantha voice, with original SVG covers. These are playable samples, not complete audiobooks. The durations in the demo metadata come from the actual bundled audio files.
 
 ## GitHub Pages
 
-Create a GitHub repository and push these files when ready. In **Settings → Pages → Build and deployment**, choose **GitHub Actions**. The included `.github/workflows/pages.yml` deploys on pushes to `main` or `master`, or through **Actions → Deploy GitHub Pages → Run workflow**. No Plex token or custom deployment secret is required. Publishing has not been performed by creating these files.
+Create a GitHub repository and push these files when ready. In **Settings → Pages → Build and deployment**, choose **GitHub Actions**. The included `.github/workflows/pages.yml` deploys on pushes to `main` or `master`, or through **Actions → Deploy GitHub Pages → Run workflow**. No server token or custom deployment secret is required.
 
 The workflow copies only the public HTML, manifest, service worker, CSS, JavaScript, and assets into its artifact. Both root sites and repository subpaths work because application URLs are relative. Serve `index.html` as the public entry page and link to `app.html` to launch the player. Follow GitHub's [custom Pages workflow documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages) for repository permissions or deployment environment issues.
 
@@ -72,11 +85,14 @@ The workflow copies only the public HTML, manifest, service worker, CSS, JavaScr
 | --- | --- |
 | `index.html` | Public information and installation page |
 | `app.html`, `css/app.css` | Phone-first player with bottom tabs, touch controls, and full-screen playback |
+| `js/servers.js`, `js/server-http.js` | Provider routing and shared HTTPS/API requests |
 | `js/plex.js` | Plex sign-in, discovery, metadata, and progress APIs |
+| `js/audiobookshelf.js` | Audiobookshelf authentication, book libraries, original audio, and progress |
+| `js/jellyfin.js` | Jellyfin and Emby authentication, libraries, original audio, and progress |
 | `js/player.js` | Playback, sleep timer, audio controls, media session |
 | `js/downloads.js`, `js/background-downloads-sw.js`, `sw.js` | Download queue, browser background transfers, cached shell, offline range responses |
 | `js/db.js` | Local IndexedDB storage |
 | `manifest.webmanifest`, `assets/` | Installation metadata, icons, covers, demo audio |
 | `tests/` | Focused automated regression checks |
 
-Plex API integration follows its [official API documentation](https://developer.plex.tv/pms/).
+API references: [Plex](https://developer.plex.tv/pms/), [Audiobookshelf](https://api.audiobookshelf.org/), [Jellyfin](https://api.jellyfin.org/), and [Emby authentication](https://dev.emby.media/doc/restapi/User-Authentication.html).

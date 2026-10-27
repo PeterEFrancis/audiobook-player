@@ -1,4 +1,4 @@
-import { PlexClient } from './plex.js';
+import { ServerClient, providerName } from './servers.js';
 import { plexProgress } from './plex-progress.js';
 import { db } from './db.js';
 import { DownloadManager } from './downloads.js';
@@ -27,9 +27,10 @@ try { config = JSON.parse(localStorage.getItem('folio.connection') || '{}'); } c
 config.servers ||= []; config.libraries ||= [];
 const clientId = localStorage.getItem('folio.client') || crypto.randomUUID();
 localStorage.setItem('folio.client', clientId);
-const plexAPI = new PlexClient({clientId});
+const plexAPI = new ServerClient({clientId, onServerChanged: () => saveConfig()});
 const plex = {
   mediaURL: (server, track) => server?.id === 'demo' ? new URL(track.key, location.href).href : plexAPI.mediaURL(server, track),
+  downloadURL: (server, track) => server?.id === 'demo' ? new URL(track.key, location.href).href : plexAPI.downloadURL(server, track),
   artworkURL: (server, book) => book.demo ? new URL(book.cover, location.href).href : plexAPI.artworkURL(server, book)
 };
 const getServer = id => id === 'demo' ? {id: 'demo'} : config.servers.find(s => s.id === id);
@@ -38,6 +39,7 @@ let books = [], progress = new Map(), downloadRecords = new Map(), bookmarks = [
 let view = location.hash.slice(1) || 'library', query = '', filter = 'all', sort = 'title', group = null, detailBook = null;
 let syncing = false, refreshBusy = false, pinTimer, workerRegistration;
 let refreshPromise, lastPlexPull = 0, incomingSyncStatus = '';
+let outgoingSyncError = '';
 const labels = {library:'Library',continue:'Continue listening',downloads:'Downloads',reading:'Reading list',bookmarks:'Bookmarks',collections:'Collections & authors',history:'Listening history',settings:'More'};
 if (!labels[view]) view = 'library';
 const workerReady = prepareWorker();
@@ -83,7 +85,7 @@ function renderShelf() {
   const latest = books.filter(b => progress.get(b.id)?.elapsed && !progress.get(b.id)?.completed).sort((a,b) => progress.get(b.id).updatedAt - progress.get(a.id).updatedAt)[0] || books.find(b => !progress.get(b.id)?.completed) || books[0];
   const p = latest && progress.get(latest.id);
   const welcome = view === 'library' && !query && !group;
-  content.innerHTML = heading(group ? e(group) : labels[view], group ? `${items.length} books` : demo ? 'Sample library · Connect Plex to add your books' : `${books.length} books · ${e(config.libraries[0]?.title || 'Plex')}`) +
+  content.innerHTML = heading(group ? e(group) : labels[view], group ? `${items.length} books` : demo ? 'Sample library · Connect a server to add your books' : `${books.length} books · ${config.libraries.length>1 ? `${config.libraries.length} libraries` : e(config.libraries[0]?.title || 'Your library')}`) +
     (welcome && latest ? `<div class="welcome-cards"><article class="resume-card">${image(latest,'resume-cover')}<div class="resume-body"><p class="eyebrow">${p?.elapsed ? 'CONTINUE LISTENING' : demo ? 'TRY A NARRATED SAMPLE' : 'READY TO LISTEN'}</p><h2>${e(latest.title)}</h2><p>${e(latest.author)}</p><div class="progress-line"><span style="width:${ratio(latest)}%"></span></div><div class="progress-meta"><span>${p?.elapsed ? `${Math.round(ratio(latest))}%` : 'Opening passage'}</span><span>${duration(Math.max(0,sumDuration(latest) - (p?.elapsed || 0)))} left</span></div><div class="resume-actions"><button class="button" data-act="play-book" data-id="${e(latest.id)}">${I('play')}${p?.elapsed ? 'Resume' : 'Listen'}</button><button class="icon-button" data-act="detail" data-id="${e(latest.id)}" aria-label="Book details">${I('more')}</button></div></div></article></div>` : '') +
     `<div class="shelf-toolbar"><div class="shelf-title"><h2>${group ? 'Books' : view === 'reading' ? 'Saved for later' : view === 'continue' ? 'In progress' : 'All books'}</h2><span>${items.length}</span></div><div class="toolbar-actions"><div class="filters" role="group" aria-label="Listening status">${[['all','All'],['progress','In progress'],['unread','Unplayed'],['finished','Finished']].map(([id,label]) => `<button data-act="filter" data-value="${id}" class="${filter === id ? 'active' : ''}" aria-pressed="${filter === id}">${label}</button>`).join('')}</div><select id="sort" aria-label="Sort books"><option value="title">Title</option><option value="author">Author</option><option value="recent">Recent</option><option value="duration">Length</option></select></div></div>` +
     (items.length ? `<div class="book-grid">${items.map(bookCard).join('')}</div>` : empty(query ? 'No stories by that name.' : 'A fresh page.', query ? 'Try another title, author, or collection.' : view === 'reading' ? 'Add a book to your reading list from its details. Your next listen will be waiting here.' : 'The books you’re looking for will appear here.', view === 'reading' ? 'heart' : 'book')) + (group ? '<p><button class="text-button" data-view="collections">← Back to collections</button></p>' : '');
@@ -167,7 +169,7 @@ async function renderHistory() {
     (real.length ? real.sort((a,b) => b.startedAt-a.startedAt).filter(h => `${h.title} ${h.author}`.toLowerCase().includes(query.toLowerCase())).slice(0,100).map(h => `<article class="history-row">${I('headphones')}<div class="row-body"><h3>${e(h.title)}</h3><p>${e(h.author)} · ${new Date(h.startedAt).toLocaleString()}<br>${duration(h.listened)} listened</p></div><button class="button outline" data-act="play-book" data-id="${e(h.bookId)}">Listen again</button></article>`).join('') : empty('Every story starts somewhere.', 'Your listening sessions and time will appear here after you press play.', 'history'));
 }
 function renderSettings() {
-  content.innerHTML = heading('Make yourself <em>at home.</em>', 'A few small things to make your listening feel like yours.') + `<div class="settings-grid"><section class="settings-card"><h2>Your Plex libraries</h2><p>${config.libraries.length ? config.libraries.map(l => `${e(l.title)} · ${e(getServer(l.serverId)?.name || 'Plex')}`).join('<br>') : 'Connect your Plex account and choose a music library with your audiobooks.'}</p><div class="form-row"><button class="button" data-act="connect">${I('plex')} Manage connection</button><button class="button outline" data-act="refresh" ${refreshBusy ? 'disabled' : ''}>${I('refresh')} Refresh</button></div><p id="sync-status">${config.libraries.length ? 'Playback progress syncs to Plex. Bookmarks and lists stay on this device.' : 'The sample shelf works without an account.'}</p>${config.servers.length ? '<button class="text-button" data-act="disconnect">Disconnect Plex from this device</button>' : ''}</section><section class="settings-card"><h2>The way you listen</h2><label class="setting-line">Default playback speed<select data-setting="speed">${[.5,.75,1,1.1,1.25,1.5,1.75,2,2.5,3].map(n => `<option value="${n}" ${settings.speed === n ? 'selected' : ''}>${n}×</option>`).join('')}</select></label><label class="setting-line">Smart rewind after a pause<input type="checkbox" data-setting="smartRewind" ${settings.smartRewind !== false ? 'checked' : ''}></label><label class="setting-line">Smart rewind seconds<input type="number" min="0" max="60" data-setting="rewindSeconds" value="${settings.rewindSeconds || 10}"></label><label class="setting-line">Keep screen awake while listening<input type="checkbox" data-setting="wakeLock" ${settings.wakeLock ? 'checked' : ''}></label><p>Each book remembers its own playback speed and sound settings. Space to pause, ← / → to skip, B to bookmark.</p></section><section class="settings-card"><h2>A little peace of mind</h2><p>Export your progress, reading list, bookmarks, listening history, and preferences. This backup contains no Plex tokens or downloaded audio.</p><div class="form-row"><button class="button secondary" data-act="export">Export backup</button><button class="button outline" data-act="import">Restore backup</button><input type="file" id="backup-file" class="backup-file" accept="application/json,.json"></div><p>Browser storage can be cleared or evicted. Keep a backup of the moments you care about.</p></section><section class="settings-card"><h2>A place of your own</h2><p>Folio connects directly to Plex. Your credentials, library, and notes are stored in this browser. No Folio account, analytics, or third-party servers.</p><div class="form-row"><a class="button secondary" href="./index.html#install">Install Folio ↗</a><button class="button outline" data-act="check-update">Check for updates</button></div><p>Downloads need HTTPS, a supported audio format, and available device storage. Background downloads are available in supported browsers. On iPhone and iPad, keep Folio open until downloads finish. Folio is independent of Plex and Prologue.</p><button class="text-button" data-act="clear-history">Clear listening history</button></section></div>`;
+  content.innerHTML = heading('Make yourself <em>at home.</em>', 'A few small things to make your listening feel like yours.') + `<div class="settings-grid"><section class="settings-card"><h2>Your server libraries</h2><p>${config.libraries.length ? config.libraries.map(l => `${e(l.title)} · ${e(getServer(l.serverId)?.name || providerName(getServer(l.serverId)))}`).join('<br>') : 'Connect Plex, Audiobookshelf, Jellyfin, or Emby and choose your audiobook library.'}</p><div class="form-row"><button class="button" data-act="connect">${I('cloud')} Manage connection</button><button class="button outline" data-act="refresh" ${refreshBusy ? 'disabled' : ''}>${I('refresh')} Refresh</button></div><p id="sync-status">${outgoingSyncError ? e(outgoingSyncError) : config.libraries.length ? 'Playback progress syncs to the matching server. Bookmarks and lists stay on this device.' : 'The sample shelf works without an account.'}</p>${config.servers.length ? '<button class="text-button" data-act="disconnect">Disconnect servers from this device</button>' : ''}</section><section class="settings-card"><h2>The way you listen</h2><label class="setting-line">Default playback speed<select data-setting="speed">${[.5,.75,1,1.1,1.25,1.5,1.75,2,2.5,3].map(n => `<option value="${n}" ${settings.speed === n ? 'selected' : ''}>${n}×</option>`).join('')}</select></label><label class="setting-line">Smart rewind after a pause<input type="checkbox" data-setting="smartRewind" ${settings.smartRewind !== false ? 'checked' : ''}></label><label class="setting-line">Smart rewind seconds<input type="number" min="0" max="60" data-setting="rewindSeconds" value="${settings.rewindSeconds || 10}"></label><label class="setting-line">Keep screen awake while listening<input type="checkbox" data-setting="wakeLock" ${settings.wakeLock ? 'checked' : ''}></label><p>Each book remembers its own playback speed and sound settings. Space to pause, ← / → to skip, B to bookmark.</p></section><section class="settings-card"><h2>A little peace of mind</h2><p>Export your progress, reading list, bookmarks, listening history, and preferences. This backup contains no server tokens or downloaded audio.</p><div class="form-row"><button class="button secondary" data-act="export">Export backup</button><button class="button outline" data-act="import">Restore backup</button><input type="file" id="backup-file" class="backup-file" accept="application/json,.json"></div><p>Browser storage can be cleared or evicted. Keep a backup of the moments you care about.</p></section><section class="settings-card"><h2>A place of your own</h2><p>Folio connects directly to your audiobook servers. Your credentials, library, and notes are stored in this browser. No Folio account, analytics, or third-party servers.</p><div class="form-row"><a class="button secondary" href="./index.html#install">Install Folio ↗</a><button class="button outline" data-act="check-update">Check for updates</button></div><p>Downloads need HTTPS, a supported audio format, and available device storage. Background downloads are available in supported browsers. On iPhone and iPad, keep Folio open until downloads finish. Folio is independent of Plex and Prologue.</p><button class="text-button" data-act="clear-history">Clear listening history</button></section></div>`;
 }
 function render() {
   $('#view-label').textContent = group || labels[view];
@@ -223,7 +225,7 @@ async function stopCurrentBook(id, save = true) {
 async function fetchBookTracks(book) {
   const observedAt=Date.now();
   const tracks=await plexAPI.tracks(getServer(book.serverId),book);
-  if(!tracks.length)throw new Error('Plex returned no audio files for this book.');
+  if(!tracks.length)throw new Error('The server returned no audio files for this book.');
   book.tracks=tracks;
   book.duration=sumDuration(book);
   book.tracksRemoteAt=Math.max(book.lastViewedAt||0,...tracks.map(t=>t.lastViewedAt||0));
@@ -245,6 +247,7 @@ async function applyRemoteProgress(book) {
   // A cached server snapshot must not rewind a checkpoint just uploaded here.
   if((book.plexProgressFetchedAt||0)<=(local?.localChangedAt||0))return;
   const remote=plexProgress(book,book.plexTracks);
+  remote.source=getServer(book.serverId)?.provider || 'plex';
   if(local?.plexFingerprint===remote.plexFingerprint && local.trackIndex===remote.trackIndex && Math.abs(local.position-remote.position)<0.01 && local.completed===remote.completed && local.duration===remote.duration)return;
   const p={...local,...remote,plexObservedAt:book.plexProgressFetchedAt};
   if(player.book?.id===book.id&&player.playing || progress.get(book.id)?.dirty)return;
@@ -260,9 +263,9 @@ async function applyRemoteProgress(book) {
 }
 async function ensureBook(id,{refreshProgress=false}={}) {
   const book = books.find(b => b.id === id) || await db.get('books',id);
-  if (!book) throw new Error('This book is no longer in the library. Refresh Plex to load it again.');
+  if (!book) throw new Error('This book is no longer in the library. Refresh your server library to load it again.');
   if(!book.demo && (!book.tracks?.length || book.tracksStale&&navigator.onLine)) {
-    if(!navigator.onLine)throw new Error('Connect to Plex and download this book before listening offline.');
+    if(!navigator.onLine)throw new Error('Connect to your server and download this book before listening offline.');
     try{await fetchBookTracks(book);}catch(error){if(!book.tracks?.length)throw error;}
   }
   if(refreshProgress && !book.demo && navigator.onLine && getServer(book.serverId)?.url && !(player.book?.id===book.id&&player.playing) && Date.now()-(book.plexProgressFetchedAt||0)>10000) {
@@ -288,7 +291,7 @@ async function showDetail(id, tab = 'chapters') {
   let book = original, trackError;
   try { book = await ensureBook(id); } catch(error) { trackError = error.message; }
   const p = progress.get(id), d = downloadRecords.get(id);
-  showModal('Between the covers', `<div class="detail-hero">${image(book)}<div><p class="eyebrow">${book.demo ? 'PUBLIC DOMAIN · NARRATED SAMPLE' : 'FROM YOUR PLEX LIBRARY'}</p><h3>${e(book.title)}</h3><p>${e(book.author)}${book.year ? ` · ${book.year}` : ''}</p><p>${duration(sumDuration(book))} · ${book.tracks?.length || book.leafCount || '—'} audio files</p><div class="detail-actions"><button class="button" data-act="play-book" data-id="${e(id)}">${I('play')}${p?.elapsed && !p.completed ? 'Continue' : 'Play'}</button><button class="button secondary" data-act="${d?.status === 'complete' ? 'remove-download' : 'download'}" data-id="${e(id)}">${I('download')}${d?.status === 'complete' ? 'Remove download' : d && d.status !== 'error' ? d.status === 'paused' ? 'Resume download' : d.status : 'Download'}</button></div></div></div><div class="chips">${(book.genres || []).map(g => `<span class="chip">${e(g)}</span>`).join('')}${p?.completed ? '<span class="chip">Finished</span>' : ''}</div><p>${e(book.summary || 'A story waiting to be heard.')}</p><div class="form-row"><button class="button outline" data-act="reading" data-id="${e(id)}">${I('heart')}${reading.includes(id) ? 'On your reading list' : 'Read later'}</button><button class="button outline" data-act="queue" data-id="${e(id)}">${I('queue')} Add to queue</button><button class="text-button" data-act="mark-finished" data-id="${e(id)}">${p?.completed ? 'Mark unplayed' : 'Mark finished'}</button></div>${trackError ? `<p class="error">${e(trackError)}</p>` : ''}<div class="detail-tabs"><button class="${tab === 'chapters' ? 'active' : ''}" data-act="detail-tab" data-value="chapters">Chapters</button><button class="${tab === 'bookmarks' ? 'active' : ''}" data-act="detail-tab" data-value="bookmarks">Bookmarks</button></div>${tab === 'chapters' ? `<div class="chapter-list">${chaptersFor(book).map((c,n) => `<button class="chapter-item ${player.book?.id === id && player.index === c.index && player.position >= c.position && player.position < c.position+c.duration ? 'active' : ''}" data-act="play-chapter" data-id="${e(id)}" data-index="${c.index}" data-position="${c.position}"><span>${String(n+1).padStart(2,'0')}</span><strong>${e(c.title)}</strong><small>${clock(c.duration)}</small></button>`).join('')}</div>` : bookmarks.filter(b => b.bookId === id).map(bookmarkRow).join('') || '<p>No bookmarks in this book yet.</p>'}`);
+  showModal('Between the covers', `<div class="detail-hero">${image(book)}<div><p class="eyebrow">${book.demo ? 'PUBLIC DOMAIN · NARRATED SAMPLE' : `FROM YOUR ${providerName(getServer(book.serverId)).toUpperCase()} LIBRARY`}</p><h3>${e(book.title)}</h3><p>${e(book.author)}${book.year ? ` · ${book.year}` : ''}</p><p>${duration(sumDuration(book))} · ${book.tracks?.length || book.leafCount || '—'} audio files</p><div class="detail-actions"><button class="button" data-act="play-book" data-id="${e(id)}">${I('play')}${p?.elapsed && !p.completed ? 'Continue' : 'Play'}</button><button class="button secondary" data-act="${d?.status === 'complete' ? 'remove-download' : 'download'}" data-id="${e(id)}">${I('download')}${d?.status === 'complete' ? 'Remove download' : d && d.status !== 'error' ? d.status === 'paused' ? 'Resume download' : d.status : 'Download'}</button></div></div></div><div class="chips">${(book.genres || []).map(g => `<span class="chip">${e(g)}</span>`).join('')}${p?.completed ? '<span class="chip">Finished</span>' : ''}</div><p>${e(book.summary || 'A story waiting to be heard.')}</p><div class="form-row"><button class="button outline" data-act="reading" data-id="${e(id)}">${I('heart')}${reading.includes(id) ? 'On your reading list' : 'Read later'}</button><button class="button outline" data-act="queue" data-id="${e(id)}">${I('queue')} Add to queue</button><button class="text-button" data-act="mark-finished" data-id="${e(id)}">${p?.completed ? 'Mark unplayed' : 'Mark finished'}</button></div>${trackError ? `<p class="error">${e(trackError)}</p>` : ''}<div class="detail-tabs"><button class="${tab === 'chapters' ? 'active' : ''}" data-act="detail-tab" data-value="chapters">Chapters</button><button class="${tab === 'bookmarks' ? 'active' : ''}" data-act="detail-tab" data-value="bookmarks">Bookmarks</button></div>${tab === 'chapters' ? `<div class="chapter-list">${chaptersFor(book).map((c,n) => `<button class="chapter-item ${player.book?.id === id && player.index === c.index && player.position >= c.position && player.position < c.position+c.duration ? 'active' : ''}" data-act="play-chapter" data-id="${e(id)}" data-index="${c.index}" data-position="${c.position}"><span>${String(n+1).padStart(2,'0')}</span><strong>${e(c.title)}</strong><small>${clock(c.duration)}</small></button>`).join('')}</div>` : bookmarks.filter(b => b.bookId === id).map(bookmarkRow).join('') || '<p>No bookmarks in this book yet.</p>'}`);
 }
 function showNowPlaying() {
   if (!player.book) { toast('Choose a book to start listening.'); return; }
@@ -315,12 +318,12 @@ function updatePlayer() {
     $('#now-chapter').textContent = chapter?.title || player.track.title;
     $('#now-speed').textContent = `${player.speed}× speed`;
     $('#now-sleep').textContent = player.sleep ? player.sleep.type === 'chapter' ? 'End of chapter' : `${Math.max(0,Math.ceil((player.sleep.end-Date.now())/60000))} min left` : 'Sleep timer';
-    $('#now-offline').textContent = player.local ? '↓ Playing offline file' : b.demo ? 'Narrated sample' : 'Streaming from Plex';
+    $('#now-offline').textContent = player.local ? '↓ Playing offline file' : b.demo ? 'Narrated sample' : `Streaming from ${providerName(getServer(b.serverId))}`;
   }
 }
 function showSpeed() {
   if (!player.book) return toast('Start a book to adjust its playback.');
-  showModal('At your own pace', `<p class="lead">Speed and sound settings are remembered for this book.</p><div class="speed-options">${[.5,.75,1,1.1,1.25,1.5,1.75,2,2.5,3].map(n => `<button class="${player.speed === n ? 'active' : ''}" data-act="set-speed" data-value="${n}">${n}×</button>`).join('')}</div><label class="setting-line">Voice boost<input type="checkbox" id="voice-boost" ${player.sound?.voiceBoost ? 'checked' : ''}></label><label class="sound-control">Warmth · bass<input type="range" id="sound-bass" min="-10" max="10" step="1" value="${player.sound?.bass || 0}" aria-label="Bass gain"></label><label class="sound-control">Clarity · treble<input type="range" id="sound-treble" min="-10" max="10" step="1" value="${player.sound?.treble || 0}" aria-label="Treble gain"></label><label class="sound-control">Volume<input type="range" id="volume" min="0" max="1" step=".05" value="${settings.volume ?? 1}"></label><p>Sound processing requires the Plex server to allow browser audio access.</p><div class="modal-actions"><button class="button" data-act="now-playing">Back to your book</button></div>`);
+  showModal('At your own pace', `<p class="lead">Speed and sound settings are remembered for this book.</p><div class="speed-options">${[.5,.75,1,1.1,1.25,1.5,1.75,2,2.5,3].map(n => `<button class="${player.speed === n ? 'active' : ''}" data-act="set-speed" data-value="${n}">${n}×</button>`).join('')}</div><label class="setting-line">Voice boost<input type="checkbox" id="voice-boost" ${player.sound?.voiceBoost ? 'checked' : ''}></label><label class="sound-control">Warmth · bass<input type="range" id="sound-bass" min="-10" max="10" step="1" value="${player.sound?.bass || 0}" aria-label="Bass gain"></label><label class="sound-control">Clarity · treble<input type="range" id="sound-treble" min="-10" max="10" step="1" value="${player.sound?.treble || 0}" aria-label="Treble gain"></label><label class="sound-control">Volume<input type="range" id="volume" min="0" max="1" step=".05" value="${settings.volume ?? 1}"></label><p>Sound processing requires your server to allow browser audio access.</p><div class="modal-actions"><button class="button" data-act="now-playing">Back to your book</button></div>`);
 }
 function showSleep() {
   if (!player.book) return toast('Choose a book before setting a sleep timer.');
@@ -334,8 +337,14 @@ function bookmarkEditor(bookmark) {
 function showQueue() {
   showModal('Up next', `<p class="lead">Your next chapter, already lined up. Add books from their details.</p>${queue.length ? queue.map((id,n) => {const b=books.find(b=>b.id===id);return `<div class="queue-item"><span>${n+1}</span><strong>${e(b?.title || 'Unavailable book')}</strong><button class="icon-button" data-act="queue-up" data-index="${n}" aria-label="Move up">↑</button><button class="icon-button" data-act="queue-remove" data-index="${n}" aria-label="Remove from queue">${I('close')}</button></div>`;}).join('') : '<p>Your queue is clear. There’s always room for another story.</p>'}`);
 }
-function showConnect() {
-  showModal('Your stories live in Plex.', `<p class="lead">Bring them here. Sign in with Plex, choose your server, and select an audiobook music library.</p><button class="button" data-act="plex-login">${I('plex')} Sign in with Plex</button>${config.accountToken ? '<button class="button outline" data-act="discover" style="margin-left:8px">Find my servers</button>' : ''}<div id="connection-status" aria-live="polite"></div>${config.libraries.length ? `<p>Connected: ${config.libraries.map(l=>e(l.title)).join(', ')}</p>` : ''}<details><summary>Connect with a server address and token</summary><form id="manual-connect"><label class="field">Secure Plex server URL<input type="url" name="url" required placeholder="https://your-server.plex.direct:32400" autocomplete="url"></label><label class="field">X-Plex-Token<input type="password" name="token" required autocomplete="off" spellcheck="false"></label><button type="submit" class="button">Connect server</button></form><p>Your token stays in this browser. Never put it in your GitHub repository or a public link.</p></details><div class="notice">Use a Plex <strong>music</strong> library: books as albums, authors as artists, and audio files as tracks. Folio plays the original audio; MP3 and AAC/M4B work in most browsers.</div><p>The GitHub Pages app needs a reachable HTTPS Plex server with a trusted certificate and browser access (CORS). Your Plex password is only entered on Plex’s own sign-in page.</p>`);
+function showConnect(provider='plex') {
+  const names={plex:'Plex',audiobookshelf:'Audiobookshelf',jellyfin:'Jellyfin',emby:'Emby'};
+  if(!names[provider])provider='plex';
+  const address=`<label class="field">Secure server URL<input type="url" name="url" required placeholder="https://books.example.com" autocomplete="url"></label>`;
+  const fields=provider==='plex'
+    ? `<button class="button" data-act="plex-login">${I('plex')} Sign in with Plex</button>${config.accountToken ? '<button class="button outline" data-act="discover" style="margin-left:8px">Find my servers</button>' : ''}<details><summary>Use a server address and Plex token</summary><form id="manual-connect">${address}<label class="field">X-Plex-Token<input type="password" name="token" required autocomplete="off" spellcheck="false"></label><button type="submit" class="button">Connect server</button></form></details><div class="notice">Choose a Plex music library: books as albums, authors as artists, and audio files as tracks. Your Plex password is entered on Plex’s sign-in page.</div>`
+    : `<form id="server-login"><input type="hidden" name="provider" value="${provider}">${address}<label class="field">Username<input name="username" autocomplete="username"></label><label class="field">Password<input type="password" name="password" autocomplete="current-password"></label><details><summary>Use an access token instead</summary><label class="field">Access token<input type="password" name="token" autocomplete="off" spellcheck="false"></label>${provider==='audiobookshelf'?'': '<label class="field">User ID, if using an administrator API key<input name="userId" autocomplete="off" spellcheck="false"></label>'}</details><button type="submit" class="button">Connect ${names[provider]}</button></form><div class="notice">${provider==='audiobookshelf'?'Choose an Audiobookshelf book library.':'Choose a Books or Music library containing audiobook audio files or albums.'} Sign in with your server account or provide an access token. Your password is sent only to your server and is not stored by Folio.</div>`;
+  showModal('Connect your library', `<p class="lead">Your books, wherever they live.</p><label class="field">Server type<select id="server-provider">${Object.entries(names).map(([id,name])=>`<option value="${id}" ${id===provider?'selected':''}>${name}</option>`).join('')}</select></label>${fields}<div id="connection-status" aria-live="polite"></div>${config.libraries.length ? `<p>Connected: ${config.libraries.map(l=>`${e(l.title)} (${providerName(getServer(l.serverId))})`).join(', ')}</p>` : ''}<p>Use a reachable HTTPS server with a trusted certificate and browser access (CORS). Tokens stay in this browser; keep them out of public links and repositories.</p>`);
 }
 function connectionStatus(html) { const status=$('#connection-status'); if(status) status.innerHTML=html; }
 async function beginLogin() {
@@ -371,7 +380,7 @@ async function selectServer(server,validate=true) {
   const index=config.servers.findIndex(s=>s.id===selectedServer.id);
   if(index>=0) config.servers[index]=selectedServer; else config.servers.push(selectedServer);
   saveConfig(); selectedLibraries=await plexAPI.libraries(selectedServer);
-  connectionStatus(selectedLibraries.length ? `<form id="library-connect"><p>Choose an audiobook music library on ${e(selectedServer.name)}.</p><label class="field">Library<select name="library">${selectedLibraries.map(l=>`<option value="${e(l.id)}">${e(l.title)}</option>`).join('')}</select></label><button class="button" type="submit">Open my library ${I('arrow')}</button></form>` : '<p class="error">This server has no music libraries. Add your audiobooks to a music library in Plex, then try again.</p>');
+  connectionStatus(selectedLibraries.length ? `<form id="library-connect"><p>Choose an audiobook library on ${e(selectedServer.name)}.</p><label class="field">Library<select name="library">${selectedLibraries.map(l=>`<option value="${e(l.id)}">${e(l.title)}</option>`).join('')}</select></label><button class="button" type="submit">Open my library ${I('arrow')}</button></form>` : '<p class="error">This account has no supported book or music libraries. Check the library type and your account’s permissions.</p>');
 }
 async function loadLibrary(library,showProgress=false) {
   const server=getServer(library.serverId);
@@ -407,22 +416,31 @@ function refresh({quiet=false,force=true}={}) {
   if(!config.libraries.length)return quiet?Promise.resolve():showConnect();
   if(quiet&&!force&&Date.now()-lastPlexPull<30000)return Promise.resolve();
   refreshBusy=true;
-  incomingSyncStatus='Reading played status and progress from Plex…';
+  incomingSyncStatus='Reading played status and progress from your servers…';
   if(view==='settings'&&$('#sync-status'))$('#sync-status').textContent=incomingSyncStatus;
-  if(!quiet)toast('Refreshing your Plex shelf and progress…');
+  if(!quiet)toast('Refreshing your libraries and progress…');
   refreshPromise=(async()=>{
     // Pending offline checkpoints are sent before reading the server snapshot.
     await flushSync();
+    const errors=[];
+    const unavailable=new Set();
     if(force) {
-      for(const server of config.servers)Object.assign(server,await plexAPI.connect(server));
+      for(const server of config.servers) {
+        try{Object.assign(server,await plexAPI.connect(server));}
+        catch(error){unavailable.add(server.id);errors.push(`${server.name || providerName(server)}: ${error.message}`);}
+      }
       saveConfig();
     }
-    for(const library of config.libraries)await loadLibrary(library);
+    for(const library of config.libraries) {
+      if(unavailable.has(library.serverId))continue;
+      try{await loadLibrary(library);}catch(error){errors.push(`${library.title}: ${error.message}`);}
+    }
     lastPlexPull=Date.now();
-    incomingSyncStatus=`Plex progress updated ${new Date(lastPlexPull).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}. Playback changes also sync back to Plex.`;
-    if(!quiet)toast('Your library and Plex progress are up to date.');
+    if(errors.length || outgoingSyncError)throw new Error([...errors,outgoingSyncError].filter(Boolean).join(' '));
+    incomingSyncStatus=`Server progress updated ${new Date(lastPlexPull).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}. Playback changes also sync back to each server.`;
+    if(!quiet)toast('Your libraries and listening progress are up to date.');
   })().catch(error=>{
-    incomingSyncStatus=`Plex progress could not refresh. Saved progress is still available. ${error.message}`;
+    incomingSyncStatus=`Server progress could not refresh. Saved progress is still available. ${error.message}`;
     if(!quiet)throw error;
   }).finally(()=>{refreshBusy=false;refreshPromise=null;render();});
   return refreshPromise;
@@ -438,7 +456,10 @@ async function flushSync() {
       if(failedBooks.has(bookId))continue;
       const server=getServer(item.serverId); if(!server) continue;
       try {
-        if(item.markPlayed != null) await plexAPI.markPlayed(server,item.book,item.markPlayed);
+        if(item.markPlayed != null) {
+          const stored=books.find(book=>book.id===bookId) || await db.get('books',bookId);
+          await plexAPI.markPlayed(server,{...item.book,...stored},item.markPlayed);
+        }
         else {
           await plexAPI.timeline(server,item.track,item);
           const state=await db.get('progress',bookId);
@@ -451,14 +472,21 @@ async function flushSync() {
           const p=await db.get('progress',bookId);
           if(p && p.updatedAt<=item.updatedAt && !await db.get('sync',bookId) && !await db.get('sync',`mark:${bookId}`)) {p.dirty=false;await db.put('progress',p);progress.set(p.id,p);}
         }
-      } catch {failedBooks.add(bookId); /* Preserve this book's remaining operation order on retry. */}
+      } catch(error) {
+        failedBooks.add(bookId);
+        outgoingSyncError=`${server.name || 'Server'}: ${error.message || 'Listening progress could not upload.'} Saved changes will retry.`;
+      }
     }
+    if(!failedBooks.size)outgoingSyncError='';
+    const label=view==='settings'&&$('#sync-status');
+    if(label&&outgoingSyncError)label.textContent=outgoingSyncError;
   } finally {syncing=false;}
 }
 async function downloadBook(id) {
   await workerReady;
   if(!navigator.serviceWorker?.controller) throw new Error('Offline support is still starting. Reload Folio once, then try downloading again.');
   const book=await ensureBook(id);
+  if(book.canDownload===false)throw new Error('This server account does not permit audiobook downloads.');
   await downloads.requestPersistence();
   const record=await downloads.download(book);
   toast(`“${book.title}” added to downloads. ${record.mode==='background' ? 'Your browser will continue the download in the background.' : 'Keep Folio open until it finishes.'}`);
@@ -490,7 +518,7 @@ async function restoreBackup(file) {
     queue=[...new Set([...queue,...(data.settings.queue || []).filter(id=>typeof id==='string')])];
     await saveSettings();
   }
-  await reloadState();render();toast('Your saved moments are back. Reconnect the matching Plex library to play its books.');
+  await reloadState();render();toast('Your saved moments are back. Reconnect the matching server library to play its books.');
 }
 let wakeLock;
 async function updateWakeLock() {
@@ -556,15 +584,15 @@ document.addEventListener('click',async event=>{
       case 'queue-view':showQueue();break;
       case 'queue-up':{const n=Number(index);if(n>0)[queue[n-1],queue[n]]=[queue[n],queue[n-1]];await saveSettings();showQueue();break;}
       case 'queue-remove':queue.splice(Number(index),1);await saveSettings();showQueue();break;
-      case 'mark-finished':{const b=await ensureBook(id);const completed=!progress.get(id)?.completed;await stopCurrentBook(id);const p={...(progress.get(id)||{}),id,completed,trackIndex:completed?b.tracks.length-1:0,position:completed?b.tracks.at(-1).duration:0,elapsed:completed?sumDuration(b):0,updatedAt:Date.now(),localChangedAt:Date.now(),source:'local',dirty:!b.demo};await db.put('progress',p);progress.set(id,p);if(!b.demo){await db.delete('sync',id);await db.put('sync',{id:`mark:${id}`,bookId:id,serverId:b.serverId,book:{ratingKey:b.ratingKey},markPlayed:completed,updatedAt:p.updatedAt});await flushSync();}showDetail(id);render();break;}
+      case 'mark-finished':{const b=await ensureBook(id);const completed=!progress.get(id)?.completed;await stopCurrentBook(id);const p={...(progress.get(id)||{}),id,completed,trackIndex:completed?b.tracks.length-1:0,position:completed?b.tracks.at(-1).duration:0,elapsed:completed?sumDuration(b):0,updatedAt:Date.now(),localChangedAt:Date.now(),source:'local',dirty:!b.demo};await db.put('progress',p);progress.set(id,p);if(!b.demo){await db.delete('sync',id);await db.put('sync',{id:`mark:${id}`,bookId:id,serverId:b.serverId,book:{ratingKey:b.ratingKey,nativeItemType:b.nativeItemType,duration:sumDuration(b)},markPlayed:completed,updatedAt:p.updatedAt});await flushSync();}showDetail(id);render();break;}
       case 'filter':filter=value;render();break;
       case 'group':group=value;view='library';filter='all';render();break;
       case 'persist':toast(await downloads.requestPersistence()?'Persistent storage granted. Your offline shelf is protected from automatic eviction when possible.':'Your browser manages storage. Keep backups and check downloads before a trip.');downloadStorageAt=0;render();break;
       case 'export':await exportBackup();toast('Your backup is ready. Keep it somewhere safe.');break;
       case 'import':$('#backup-file').click();break;
       case 'check-update':await workerRegistration?.update();if(workerRegistration?.waiting)offerUpdate();else toast('Update check finished. Folio will let you know when a new version is ready.');break;
-      case 'disconnect':showModal('Disconnect from Plex?',`<p>Your Plex tokens will be removed from this browser. Downloaded books, progress, and notes stay available on this device.</p><div class="modal-actions"><button class="button outline" data-act="close">Keep connected</button><button class="button" data-act="confirm-disconnect">Disconnect</button></div>`);break;
-      case 'confirm-disconnect':config={servers:[],libraries:[]};saveConfig();clearTimeout(pinTimer);sessionStorage.removeItem('folio.pin');modal.close();render();toast('Plex disconnected. Your offline shelf is still here.');break;
+      case 'disconnect':showModal('Disconnect your servers?',`<p>Your server tokens will be removed from this browser. Downloaded books, progress, and notes stay available on this device.</p><div class="modal-actions"><button class="button outline" data-act="close">Keep connected</button><button class="button" data-act="confirm-disconnect">Disconnect</button></div>`);break;
+      case 'confirm-disconnect':config={servers:[],libraries:[]};saveConfig();clearTimeout(pinTimer);sessionStorage.removeItem('folio.pin');modal.close();render();toast('Servers disconnected. Your offline shelf is still here.');break;
       case 'clear-history':showModal('Clear listening history?',`<p>This removes listening sessions and statistics from this device. Your books, progress, and bookmarks stay saved.</p><div class="modal-actions"><button class="button outline" data-act="close">Keep history</button><button class="button" data-act="confirm-clear-history">Clear history</button></div>`);break;
       case 'confirm-clear-history':await db.clear('history');history=[];player.session=null;modal.close();render();toast('Listening history cleared.');break;
     }
@@ -575,19 +603,21 @@ document.addEventListener('submit',async event=>{
   event.preventDefault();const form=event.target;const data=new FormData(form);const button=$('[type=submit]',form);if(button)button.disabled=true;
   try {
     if(form.id==='manual-connect') {const server=await plexAPI.validateServer({url:data.get('url'),token:data.get('token')});form.reset();await selectServer(server,false);}
+    else if(form.id==='server-login') {const server=await plexAPI.login(Object.fromEntries(data));form.reset();await selectServer(server,false);}
     else if(form.id==='library-connect') {
       const chosen=selectedLibraries.find(l=>l.id===data.get('library'));const library={...chosen,serverId:selectedServer.id};
       if(!config.libraries.some(l=>l.serverId===library.serverId&&l.id===library.id))config.libraries.push(library);saveConfig();
-      await loadLibrary(library,true);modal.close();navigate('library');toast('Your Plex shelf is ready. Pick a story.');
+      await loadLibrary(library,true);modal.close();navigate('library');toast('Your library is ready. Pick a story.');
     } else if(form.id==='bookmark-form') {
       const b=JSON.parse(data.get('bookmark'));b.note=String(data.get('note')).trim();b.updatedAt=Date.now();await db.put('bookmarks',b);bookmarks=await db.all('bookmarks');modal.close();render();toast('Moment saved.');
     } else if(form.id==='sleep-form') {player.setSleep(Number(data.get('minutes')));modal.close();toast(`Sleep timer set for ${data.get('minutes')} minutes.`);}
-  } catch(error) {toast(error.message,true);if(['manual-connect','library-connect'].includes(form.id))connectionStatus(`<p class="error">${e(error.message)}</p>`);}
+  } catch(error) {toast(error.message,true);if(['manual-connect','server-login','library-connect'].includes(form.id))connectionStatus(`<p class="error">${e(error.message)}</p>`);}
   finally {if(button?.isConnected)button.disabled=false;}
 });
 document.addEventListener('change',async event=>{
   const el=event.target;
   try {
+    if(el.id==='server-provider'){clearTimeout(pinTimer);sessionStorage.removeItem('folio.pin');showConnect(el.value);}
     if(el.id==='sort'){sort=el.value;render();}
     if(['mini-seek','now-seek'].includes(el.id))await player.seek(Number(el.value));
     if(el.dataset.setting){settings[el.dataset.setting]=el.type==='checkbox'?el.checked:Number(el.value);await saveSettings();await updateWakeLock();}

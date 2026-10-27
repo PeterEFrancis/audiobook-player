@@ -52,7 +52,7 @@ export class Player extends EventTarget {
     });
     this.audio.addEventListener('ended', () => this.ended().catch(e => this.error(e)));
     this.audio.addEventListener('error', () => {
-      if (this.audio.error) this.error(new Error(navigator.onLine ? 'This audio could not be played. Check the Plex connection and that your browser supports its format (MP3, AAC, or M4B/AAC).' : 'This track is not available offline. Download the complete book before disconnecting.'));
+      if (this.audio.error) this.error(new Error(navigator.onLine ? 'This audio could not be played. Check the server connection and that your browser supports its format (MP3, AAC, or M4B/AAC).' : 'This track is not available offline. Download the complete book before disconnecting.'));
     });
     this.audio.addEventListener('waiting', () => { this.accountListening(); this.listening = false; this.emit(); });
     this.timer = setInterval(() => this.checkSleep(), 500);

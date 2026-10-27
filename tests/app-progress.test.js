@@ -17,7 +17,7 @@ function setup(local) {
   const clock = {value: 1000};
   const context = vm.createContext({
     structuredClone, plexProgress, sumDuration, books: [], progress: new Map(local ? [[book.id, structuredClone(local)]] : []), demoBooks: [],
-    Date: {now: () => clock.value}, getServer: () => ({}), connectionStatus: () => {}, syncing: false, navigator: {onLine: true},
+    Date: {now: () => clock.value}, getServer: () => ({}), connectionStatus: () => {}, syncing: false, outgoingSyncError: '', view:'library', navigator: {onLine: true},
     player: {book: null, playing: false, generation: 0}, stopCurrentBook: async () => {},
     modal: {classList: {contains: () => false}, close: () => {}},
     db: {
@@ -118,4 +118,18 @@ test('failed earlier work retains newer playback until retry while other books s
   assert.deepEqual(sent, ['other', 'mark', '2']);
   assert.equal(pending.size, 0);
   assert.equal(saved().dirty, false);
+});
+
+
+test('queued played changes recover provider metadata from the saved book', async () => {
+  const {context, stores} = setup();
+  const full = {...book, nativeItemType: 'MusicAlbum', duration: 300};
+  stores.get('books').set(book.id, full);
+  stores.get('sync').set(`mark:${book.id}`, {id: `mark:${book.id}`, bookId: book.id, serverId: 'server', book: {ratingKey: 'book'}, markPlayed: true, updatedAt: 1000});
+  let sent;
+  context.plexAPI.markPlayed = async (_server, metadata) => {sent = metadata;};
+  await context.flushSync();
+  assert.equal(sent.nativeItemType, 'MusicAlbum');
+  assert.equal(sent.duration, 300);
+  assert.equal(stores.get('sync').size, 0);
 });
