@@ -46,8 +46,8 @@ const player = new Player({plex, downloads, getServer, artworkURL: cover, settin
 document.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = I(el.dataset.icon));
 function saveConfig() { localStorage.setItem('folio.connection', JSON.stringify(config)); }
 function cover(book) {
-  if (downloadRecords.get(book.id)?.status === 'complete') return downloads.artworkURL(book.id);
   if (book.demo) return book.cover;
+  if (downloadRecords.get(book.id)?.status === 'complete') return downloads.artworkURL(book.id);
   const server = getServer(book.serverId);
   return server?.url && book.thumb ? plexAPI.artworkURL(server, book) : './assets/icon.svg';
 }

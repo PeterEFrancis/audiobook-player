@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'folio-shell-v6';
+const SHELL_CACHE = 'folio-shell-v7';
 const MEDIA_CACHE = 'folio-media-v1';
 const ROOT = new URL(self.registration.scope);
 const SHELL = [
