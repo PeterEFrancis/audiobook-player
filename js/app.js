@@ -3,7 +3,8 @@ import { plexProgress } from './plex-progress.js';
 import { db } from './db.js';
 import { DownloadManager } from './downloads.js';
 import { Player } from './player.js';
-import { demoBooks } from './demo.js';
+import { librivoxServer, librivoxLibrary } from './librivox.js';
+import { retireAutomaticCatalog } from './librivox-catalog.js';
 import { removeLegacySamples } from './sample-migration.js';
 import { bindBookSheet } from './book-sheet.js';
 import { escapeHTML as e, clock, duration, bytes, sumDuration, chaptersFor } from './utils.js';
@@ -35,18 +36,19 @@ const clientId = localStorage.getItem('folio.client') || crypto.randomUUID();
 localStorage.setItem('folio.client', clientId);
 const plexAPI = new ServerClient({clientId, onServerChanged: () => saveConfig()});
 const plex = {
-  mediaURL: (server, track) => server?.id === 'demo' ? new URL(track.key, location.href).href : plexAPI.mediaURL(server, track),
-  downloadURL: (server, track) => server?.id === 'demo' ? new URL(track.key, location.href).href : plexAPI.downloadURL(server, track),
-  artworkURL: (server, book) => book.demo ? new URL(book.cover, location.href).href : plexAPI.artworkURL(server, book)
+  mediaURL:(server,track)=>plexAPI.mediaURL(server,track),
+  downloadURL:(server,track)=>plexAPI.downloadURL(server,track),
+  artworkURL:(server,book)=>plexAPI.artworkURL(server,book)
 };
-const getServer = id => id === 'demo' ? {id: 'demo'} : config.servers.find(s => s.id === id);
+const getServer = id => id === librivoxServer.id ? librivoxServer : config.servers.find(s => s.id === id);
 const downloads = new DownloadManager({getServer, plex});
 let books = [], progress = new Map(), downloadRecords = new Map(), bookmarks = [], history = [], settings = {}, reading = [], queue = [];
 let view = location.hash.slice(1) || 'library', query = '', filter = 'all', sort = 'title', group = null, detailBook = null;
 let syncing = false, refreshBusy = false, pinTimer, workerRegistration;
 let refreshPromise, lastPlexPull = 0, incomingSyncStatus = '';
-let outgoingSyncError = '';
-const labels = {library:'Library',continue:'Continue listening',downloads:'Downloads',reading:'Reading list',bookmarks:'Bookmarks',collections:'Collections & authors',history:'Listening history',settings:'More'};
+let outgoingSyncError = '', shelfLimit = 60;
+let catalogQuery = '', catalogField = 'title', catalogResults = [], catalogOffset = 0, catalogHasMore = false, catalogSearching = false, catalogError = '', catalogSearched = false, catalogAbort, catalogVersion = 0;
+const labels = {library:'Library',continue:'Continue listening',downloads:'Downloads',reading:'Reading list',bookmarks:'Bookmarks',collections:'Collections & authors',history:'Listening history',settings:'Settings'};
 if (!labels[view]) view = 'library';
 const workerReady = prepareWorker();
 const player = new Player({plex, downloads, getServer, artworkURL: cover, settings});
@@ -54,7 +56,6 @@ const player = new Player({plex, downloads, getServer, artworkURL: cover, settin
 document.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = I(el.dataset.icon));
 function saveConfig() { localStorage.setItem('folio.connection', JSON.stringify(config)); }
 function cover(book) {
-  if (book.demo) return book.cover;
   if (downloadRecords.get(book.id)?.status === 'complete') return downloads.artworkURL(book.id);
   const server = getServer(book.serverId);
   return server?.url && book.thumb ? plexAPI.artworkURL(server, book) : './assets/icon.svg';
@@ -69,7 +70,8 @@ document.addEventListener('error', event => { const img = event.target; if (img.
 function heading(title, subtitle, action = '') { return `<div class="page-heading"><div><p class="eyebrow">THE ART OF LISTENING</p><h1>${title}</h1><p class="lead">${subtitle}</p></div>${action}</div>`; }
 function empty(title, text, icon = 'book', action = '') { return `<div class="empty-state">${I(icon)}<h2>${title}</h2><p>${text}</p>${action}</div>`; }
 function ratio(book) { const p = progress.get(book.id); return p?.completed ? 100 : Math.min(100, (p?.elapsed || 0) / (sumDuration(book) || 1) * 100); }
-function libraryBooks() { return settings.includeLibrivox === false ? books.filter(book => !book.demo) : books; }
+function libraryBooks() { return books.filter(book => !book.librivox || book.inLibrary); }
+function activeLibraries() { return [...config.libraries,...(libraryBooks().some(book=>book.librivox) ? [librivoxLibrary] : [])]; }
 function visibleBooks() {
   return libraryBooks().filter(book => {
     const p = progress.get(book.id);
@@ -84,19 +86,20 @@ function visibleBooks() {
 }
 function bookCard(book) {
   const p = progress.get(book.id), d = downloadRecords.get(book.id);
-  return `<article class="book-card"><div class="cover-wrap"><button class="cover-button" data-act="detail" data-id="${e(book.id)}" aria-label="Open ${e(book.title)}">${image(book)}<span class="cover-play">${I('play')}</span></button>${p?.completed ? '<span class="cover-badge">Finished</span>' : book.demo ? '<span class="cover-badge">FREE AUDIOBOOK</span>' : p?.elapsed ? `<span class="cover-badge">${Math.round(ratio(book))}% listened</span>` : ''}${d?.status === 'complete' ? `<span class="cover-badge downloaded" title="Available offline">${I('download')}</span>` : ''}</div><div class="book-meta"><div><h3><button class="title-button" data-act="detail" data-id="${e(book.id)}">${e(book.title)}</button></h3><p>${e(book.author)}</p><small>${duration(sumDuration(book))}${book.genres?.length ? ` <span aria-hidden="true">·</span> ${e(book.genres.join(', '))}` : ''}</small></div><button class="icon-button" data-act="detail" data-id="${e(book.id)}" aria-label="Options for ${e(book.title)}">${I('more')}</button></div>${p?.elapsed ? `<div class="progress-line"><span style="width:${ratio(book)}%"></span></div>` : ''}</article>`;
+  return `<article class="book-card"><div class="cover-wrap"><button class="cover-button" data-act="detail" data-id="${e(book.id)}" aria-label="Open ${e(book.title)}">${image(book)}<span class="cover-play">${I('play')}</span></button>${p?.completed ? '<span class="cover-badge">Finished</span>' : book.librivox ? '<span class="cover-badge">LIBRIVOX</span>' : p?.elapsed ? `<span class="cover-badge">${Math.round(ratio(book))}% listened</span>` : ''}${d?.status === 'complete' ? `<span class="cover-badge downloaded" title="Available offline">${I('download')}</span>` : ''}</div><div class="book-meta"><div><h3><button class="title-button" data-act="detail" data-id="${e(book.id)}">${e(book.title)}</button></h3><p>${e(book.author)}</p><small>${duration(sumDuration(book))}${book.genres?.length ? ` <span aria-hidden="true">·</span> ${e(book.genres.join(', '))}` : ''}</small></div><button class="icon-button" data-act="detail" data-id="${e(book.id)}" aria-label="Options for ${e(book.title)}">${I('more')}</button></div>${p?.elapsed ? `<div class="progress-line"><span style="width:${ratio(book)}%"></span></div>` : ''}</article>`;
 }
 function renderShelf() {
   const items = visibleBooks();
   const shelf = libraryBooks();
-  const demo = shelf.length > 0 && shelf.every(b => b.demo);
+  const free = shelf.length > 0 && shelf.every(b => b.librivox);
+  const libraries = activeLibraries();
   const latest = shelf.filter(b => progress.get(b.id)?.elapsed && !progress.get(b.id)?.completed).sort((a,b) => progress.get(b.id).updatedAt - progress.get(a.id).updatedAt)[0] || shelf.find(b => !progress.get(b.id)?.completed) || shelf[0];
   const p = latest && progress.get(latest.id);
   const welcome = view === 'library' && !query && !group;
-  content.innerHTML = heading(group ? e(group) : labels[view], group ? `${items.length} books` : demo ? 'Free audiobooks · Connect a server to add your books' : `${shelf.length} books · ${config.libraries.length>1 ? `${config.libraries.length} libraries` : e(config.libraries[0]?.title || 'Your library')}`) +
-    (welcome && latest ? `<div class="welcome-cards"><article class="resume-card">${image(latest,'resume-cover')}<div class="resume-body"><p class="eyebrow">${p?.elapsed ? 'CONTINUE LISTENING' : demo ? 'TRY A FREE AUDIOBOOK' : 'READY TO LISTEN'}</p><h2>${e(latest.title)}</h2><p>${e(latest.author)}</p><div class="progress-line"><span style="width:${ratio(latest)}%"></span></div><div class="progress-meta"><span>${p?.elapsed ? `${Math.round(ratio(latest))}%` : 'Not started'}</span><span>${duration(Math.max(0,sumDuration(latest) - (p?.elapsed || 0)))} left</span></div><div class="resume-actions"><button class="button" data-act="play-book" data-id="${e(latest.id)}">${I('play')}${p?.elapsed ? 'Resume' : 'Listen'}</button><button class="icon-button" data-act="detail" data-id="${e(latest.id)}" aria-label="Book details">${I('more')}</button></div></div></article></div>` : '') +
+  content.innerHTML = heading(group ? e(group) : labels[view], group ? `${items.length} books` : `${shelf.length.toLocaleString()} ${shelf.length===1?'book':'books'} · ${libraries.length>1 ? `${libraries.length} libraries` : e(libraries[0]?.title || 'Your library')}`, view==='library' && settings.includeLibrivox !== false ? `<button class="button outline" data-act="find-librivox">${I('search')} Find LibriVox books</button>` : '') +
+    (welcome && latest ? `<div class="welcome-cards"><article class="resume-card">${image(latest,'resume-cover')}<div class="resume-body"><p class="eyebrow">${p?.elapsed ? 'CONTINUE LISTENING' : free ? 'EXPLORE LIBRIVOX' : 'READY TO LISTEN'}</p><h2>${e(latest.title)}</h2><p>${e(latest.author)}</p><div class="progress-line"><span style="width:${ratio(latest)}%"></span></div><div class="progress-meta"><span>${p?.elapsed ? `${Math.round(ratio(latest))}%` : 'Not started'}</span><span>${duration(Math.max(0,sumDuration(latest) - (p?.elapsed || 0)))} left</span></div><div class="resume-actions"><button class="button" data-act="play-book" data-id="${e(latest.id)}">${I('play')}${p?.elapsed ? 'Resume' : 'Listen'}</button><button class="icon-button" data-act="detail" data-id="${e(latest.id)}" aria-label="Book details">${I('more')}</button></div></div></article></div>` : '') +
     `<div class="shelf-toolbar"><div class="shelf-title"><h2>${group ? 'Books' : view === 'reading' ? 'Saved for later' : view === 'continue' ? 'In progress' : 'All books'}</h2><span>${items.length}</span></div><div class="toolbar-actions"><div class="filters" role="group" aria-label="Listening status">${[['all','All'],['progress','In progress'],['unread','Unplayed'],['finished','Finished']].map(([id,label]) => `<button data-act="filter" data-value="${id}" class="${filter === id ? 'active' : ''}" aria-pressed="${filter === id}">${label}</button>`).join('')}</div><select id="sort" aria-label="Sort books"><option value="title">Title</option><option value="author">Author</option><option value="recent">Recent</option><option value="duration">Length</option></select></div></div>` +
-    (items.length ? `<div class="book-grid">${items.map(bookCard).join('')}</div>` : empty(query ? 'No stories by that name.' : 'A fresh page.', query ? 'Try another title, author, or collection.' : view === 'reading' ? 'Add a book to your reading list from its details. Your next listen will be waiting here.' : !shelf.length ? 'Connect a server or enable LibriVox in More → Your server libraries.' : 'The books you’re looking for will appear here.', view === 'reading' ? 'heart' : 'book')) + (group ? '<p><button class="text-button" data-view="collections">← Back to collections</button></p>' : '');
+    (items.length ? `<div class="book-grid">${items.slice(0,shelfLimit).map(bookCard).join('')}</div>${items.length>shelfLimit ? `<p><button class="button outline" data-act="more-books">Show more books (${Math.min(shelfLimit,items.length)} of ${items.length.toLocaleString()})</button></p>` : ''}` : empty(query ? 'No stories by that name.' : 'A fresh page.', query ? 'Try another title, author, or collection.' : view === 'reading' ? 'Add a book to your reading list from its details. Your next listen will be waiting here.' : !shelf.length ? settings.includeLibrivox !== false ? 'Find a free audiobook in the LibriVox catalog and add it to your library, or connect your server in Settings.' : 'Connect your audiobook server in Settings, or enable LibriVox catalog search.' : 'The books you’re looking for will appear here.', view === 'reading' ? 'heart' : 'book')) + (group ? '<p><button class="text-button" data-view="collections">← Back to collections</button></p>' : '');
   $('#sort').value = sort;
   if (welcome && latest) $('.welcome-cards',content).insertAdjacentHTML('beforeend',`<article class="offline-promo">${I('download')}<h2>Take your next<br>story offline.</h2><p>Save a book before you go. Your place, your chapters, and your audio come with you.</p><button data-view="downloads">Open downloads &nbsp; →</button></article>`);
 }
@@ -177,7 +180,7 @@ async function renderHistory() {
     (real.length ? real.sort((a,b) => b.startedAt-a.startedAt).filter(h => `${h.title} ${h.author}`.toLowerCase().includes(query.toLowerCase())).slice(0,100).map(h => `<article class="history-row">${I('headphones')}<div class="row-body"><h3>${e(h.title)}</h3><p>${e(h.author)} · ${new Date(h.startedAt).toLocaleString()}<br>${duration(h.listened)} listened</p></div><button class="button outline" data-act="play-book" data-id="${e(h.bookId)}">Listen again</button></article>`).join('') : empty('Every story starts somewhere.', 'Your listening sessions and time will appear here after you press play.', 'history'));
 }
 function renderSettings() {
-  content.innerHTML = heading('Make yourself <em>at home.</em>', 'A few small things to make your listening feel like yours.') + `<div class="settings-grid"><section class="settings-card"><h2>Your server libraries</h2><label class="setting-line">Include LibriVox audiobooks<input type="checkbox" role="switch" data-setting="includeLibrivox" ${settings.includeLibrivox !== false ? 'checked' : ''}></label><p>${config.libraries.length ? config.libraries.map(l => `${e(l.title)} · ${e(getServer(l.serverId)?.name || providerName(getServer(l.serverId)))}`).join('<br>') : 'Connect Plex, Audiobookshelf, Jellyfin, or Emby and choose your audiobook library.'}</p><div class="form-row"><button class="button" data-act="connect">${I('cloud')} Manage connection</button><button class="button outline" data-act="refresh" ${refreshBusy ? 'disabled' : ''}>${I('refresh')} Refresh</button></div><p id="sync-status">${outgoingSyncError ? e(outgoingSyncError) : config.libraries.length ? 'Playback progress syncs to the matching server. Bookmarks and lists stay on this device.' : 'The free audiobook shelf works without an account.'}</p>${config.servers.length ? '<button class="text-button" data-act="disconnect">Disconnect servers from this device</button>' : ''}</section><section class="settings-card"><h2>The way you listen</h2><label class="setting-line">Default playback speed<select data-setting="speed">${[.5,.75,1,1.1,1.25,1.5,1.75,2,2.5,3].map(n => `<option value="${n}" ${settings.speed === n ? 'selected' : ''}>${n}×</option>`).join('')}</select></label><label class="setting-line">Smart rewind after a pause<input type="checkbox" data-setting="smartRewind" ${settings.smartRewind !== false ? 'checked' : ''}></label><label class="setting-line">Smart rewind seconds<input type="number" min="0" max="60" data-setting="rewindSeconds" value="${settings.rewindSeconds || 10}"></label><label class="setting-line">Keep screen awake while listening<input type="checkbox" data-setting="wakeLock" ${settings.wakeLock ? 'checked' : ''}></label><p>Each book remembers its own playback speed and sound settings. Space to pause, ← / → to skip, B to bookmark.</p></section><section class="settings-card"><h2>A little peace of mind</h2><p>Export your progress, reading list, bookmarks, listening history, and preferences. This backup contains no server tokens or downloaded audio.</p><div class="form-row"><button class="button secondary" data-act="export">Export backup</button><button class="button outline" data-act="import">Restore backup</button><input type="file" id="backup-file" class="backup-file" accept="application/json,.json"></div><p>Browser storage can be cleared or evicted. Keep a backup of the moments you care about.</p></section><section class="settings-card"><h2>Listening in the car</h2><p>Connect your iPhone to CarPlay, start an audiobook in Folio on your phone, then open <strong>Now Playing</strong> on the car display.</p><p>Use play/pause, rewind 15 seconds, forward 30 seconds, or chapter controls where your car and iOS make them available. Folio saves your place when playback pauses.</p><p>Available controls depend on your iPhone and car. Folio stays a web app; it has no separate CarPlay icon or library browser.</p></section><section class="settings-card"><h2>A place of your own</h2><p>Folio connects directly to your audiobook servers. Your credentials, library, and notes are stored in this browser. No Folio account, analytics, or third-party servers.</p><div class="form-row"><a class="button secondary" href="./index.html#install">Install Folio ↗</a><button class="button outline" data-act="check-update">Check for updates</button></div><p>Downloads need HTTPS, a supported audio format, and available device storage. Background downloads are available in supported browsers. On iPhone and iPad, keep Folio open until downloads finish. Folio is independent of Plex and Prologue.</p><button class="text-button" data-act="clear-history">Clear listening history</button></section></div>`;
+  content.innerHTML = heading('Make yourself <em>at home.</em>', 'A few small things to make your listening feel like yours.') + `<div class="settings-grid"><section class="settings-card"><h2>Your server libraries</h2><label class="setting-line">Enable LibriVox catalog search<input type="checkbox" role="switch" data-setting="includeLibrivox" ${settings.includeLibrivox !== false ? 'checked' : ''}></label><p>Search LibriVox and add the books you want. Added books support streaming and offline downloads. Turning search off keeps your added books and downloads.</p><p>${config.libraries.length ? config.libraries.map(l => `${e(l.title)} · ${e(getServer(l.serverId)?.name || providerName(getServer(l.serverId)))}`).join('<br>') : 'Connect Plex, Audiobookshelf, Jellyfin, or Emby and choose your audiobook library.'}</p><div class="form-row"><button class="button" data-act="connect">${I('cloud')} Manage connection</button><button class="button outline" data-act="refresh" ${refreshBusy ? 'disabled' : ''}>${I('refresh')} Refresh</button></div><p id="sync-status">${outgoingSyncError ? e(outgoingSyncError) : config.libraries.length ? 'Playback progress syncs to the matching server. Bookmarks and lists stay on this device.' : 'LibriVox search works without an account. Listening progress stays on this device.'}</p>${config.servers.length ? '<button class="text-button" data-act="disconnect">Disconnect servers from this device</button>' : ''}</section><section class="settings-card"><h2>The way you listen</h2><label class="setting-line">Default playback speed<select data-setting="speed">${[.5,.75,1,1.1,1.25,1.5,1.75,2,2.5,3].map(n => `<option value="${n}" ${settings.speed === n ? 'selected' : ''}>${n}×</option>`).join('')}</select></label><label class="setting-line">Smart rewind after a pause<input type="checkbox" data-setting="smartRewind" ${settings.smartRewind !== false ? 'checked' : ''}></label><label class="setting-line">Smart rewind seconds<input type="number" min="0" max="60" data-setting="rewindSeconds" value="${settings.rewindSeconds || 10}"></label><label class="setting-line">Keep screen awake while listening<input type="checkbox" data-setting="wakeLock" ${settings.wakeLock ? 'checked' : ''}></label><p>Each book remembers its own playback speed and sound settings. Space to pause, ← / → to skip, B to bookmark.</p></section><section class="settings-card"><h2>A little peace of mind</h2><p>Export your progress, reading list, bookmarks, listening history, and preferences. This backup contains no server tokens or downloaded audio.</p><div class="form-row"><button class="button secondary" data-act="export">Export backup</button><button class="button outline" data-act="import">Restore backup</button><input type="file" id="backup-file" class="backup-file" accept="application/json,.json"></div><p>Browser storage can be cleared or evicted. Keep a backup of the moments you care about.</p></section><section class="settings-card"><h2>Listening in the car</h2><p>Connect your iPhone to CarPlay, start an audiobook in Folio on your phone, then open <strong>Now Playing</strong> on the car display.</p><p>Use play/pause, rewind 15 seconds, forward 30 seconds, or chapter controls where your car and iOS make them available. Folio saves your place when playback pauses.</p><p>Available controls depend on your iPhone and car. Folio stays a web app; it has no separate CarPlay icon or library browser.</p></section><section class="settings-card"><h2>A place of your own</h2><p>Folio connects directly to your audiobook servers. Your credentials, library, and notes are stored in this browser. No Folio account or analytics. LibriVox catalog and audio requests go directly to LibriVox and Internet Archive.</p><div class="form-row"><a class="button secondary" href="./index.html#install">Install Folio ↗</a><button class="button outline" data-act="check-update">Check for updates</button></div><p>Downloads need HTTPS, a supported audio format, and available device storage. Background downloads are available in supported browsers. On iPhone and iPad, keep Folio open until downloads finish. Folio is independent of Plex and Prologue.</p><button class="text-button" data-act="clear-history">Clear listening history</button></section></div>`;
 }
 function render() {
   $('#view-label').textContent = group || labels[view];
@@ -197,13 +200,13 @@ function render() {
   else if (view === 'history') renderHistory().catch(error => toast(error.message,true));
   else if (view === 'settings') {
     renderSettings();
-    $('.page-heading h1',content).textContent = 'More';
+    $('.page-heading h1',content).textContent = 'Settings';
     $('.page-heading .lead',content).textContent = 'Your listening space.';
     $('.page-heading',content).insertAdjacentHTML('afterend',`<div class="more-menu">${[['bookmarks','bookmark','Bookmarks'],['collections','collection','Collections & authors'],['history','history','Listening history'],['continue','headphones','Continue listening']].map(([route,icon,title]) => `<button class="more-item" data-view="${route}"><span>${I(icon)}</span><strong>${title}</strong><span>›</span></button>`).join('')}</div>`);
     if (incomingSyncStatus) $('#sync-status').textContent = incomingSyncStatus;
   }
 }
-function navigate(target) { view = labels[target] ? target : 'library'; group = null; filter = 'all'; query = ''; $('#search').value = ''; location.hash = view; document.body.classList.remove('nav-open'); render(); window.scrollTo(0,0); }
+function navigate(target) { shelfLimit=60; view = labels[target] ? target : 'library'; group = null; filter = 'all'; query = ''; $('#search').value = ''; location.hash = view; document.body.classList.remove('nav-open'); render(); window.scrollTo(0,0); }
 function showModal(title, html, className = '') {
   modalVersion++;
   resetBookSheet();
@@ -211,6 +214,51 @@ function showModal(title, html, className = '') {
   modal.setAttribute('aria-label',title || 'Book details');
   $('#modal-content').innerHTML = `<div class="modal-content">${className === 'book-modal' ? '<button type="button" class="modal-handle" data-act="close" aria-label="Close book details"></button>' : ''}<div class="modal-header">${title ? `<h2>${title}</h2>` : ''}<button class="icon-button" data-act="close" aria-label="Close dialog">${I('close')}</button></div>${html}</div>`;
   if (!modal.open) modal.showModal();
+}
+function showLibriVoxSearch() {
+  if(settings.includeLibrivox === false)return;
+  if(query.trim().length>=2 && query!==catalogQuery){catalogQuery=query.trim();catalogResults=[];catalogSearched=false;}
+  showModal('Find LibriVox books', `<p>Search the public catalog, then add the books you want to your library.</p><form id="librivox-search"><label class="field">Title or author<input type="search" name="query" minlength="2" required value="${e(catalogQuery)}" placeholder="Search LibriVox" autocomplete="off"></label><div class="form-row"><label class="field">Search by<select name="field"><option value="title" ${catalogField==='title'?'selected':''}>Title</option><option value="author" ${catalogField==='author'?'selected':''}>Author</option></select></label><button type="submit" class="button">${I('search')} Search</button></div></form><div id="librivox-results" aria-live="polite"></div>`);
+  renderLibriVoxResults();
+  if(catalogQuery.length>=2 && !catalogSearched)void searchLibriVox(catalogQuery,catalogField);
+}
+function renderLibriVoxResults() {
+  const results=$('#librivox-results');if(!results)return;
+  results.innerHTML=(catalogError ? `<p class="error">${e(catalogError)}</p>` : '')+
+    (catalogResults.length ? `<p>${catalogResults.length} results${catalogHasMore?' shown':''}</p>`+catalogResults.map(book=>{
+      const added=books.some(saved=>sameLibriVoxBook(saved,book) && saved.inLibrary);
+      return `<article class="history-row">${image(book,'row-cover')}<div class="row-body"><h3>${e(book.title)}</h3><p>${e(book.author)} · ${e(book.language)}<br>${sumDuration(book)>0?duration(sumDuration(book)):'Length available when opened'}</p></div><button class="button outline" data-act="add-librivox" data-id="${e(book.id)}" ${added?'disabled':''}>${added?'Added':'Add to library'}</button></article>`;
+    }).join('') : catalogSearched && !catalogSearching && !catalogError ? '<p>No books found. Try another title, or search by author.</p>' : !catalogSearching && !catalogError ? '<p>Your library contains only the books you add. Audio streams when you listen, or you can download it for offline use.</p>' : '')+
+    (catalogSearching ? '<p class="loading">Searching LibriVox…</p>' : catalogHasMore ? '<p><button class="button outline" data-act="more-librivox">Show more results</button></p>' : '');
+}
+async function searchLibriVox(value,field='title',more=false) {
+  if(settings.includeLibrivox === false)return;
+  const term=String(value||'').trim();if(term.length<2)return;
+  catalogAbort?.abort();catalogAbort=new AbortController();
+  const version=++catalogVersion;
+  catalogQuery=term;catalogField=field==='author'?'author':'title';
+  if(!more){catalogResults=[];catalogOffset=0;catalogHasMore=false;}
+  catalogSearching=true;catalogError='';catalogSearched=true;renderLibriVoxResults();
+  try {
+    const result=await plexAPI.clients.librivox.search(term,{field:catalogField,offset:catalogOffset,signal:catalogAbort.signal});
+    if(version!==catalogVersion)return;
+    const rows=new Map(catalogResults.map(book=>[book.id,book]));for(const book of result.books)rows.set(book.id,book);
+    catalogResults=[...rows.values()];catalogOffset=result.nextOffset;catalogHasMore=result.hasMore;
+  }catch(error){if(version===catalogVersion && error.name!=='AbortError')catalogError=error.message;}
+  finally{if(version===catalogVersion){catalogSearching=false;renderLibriVoxResults();}}
+}
+function sameLibriVoxBook(a,b) {
+  if(a.id===b.id)return true;
+  const key=book=>book.archiveIdentifier || book.archiveURL?.match(/\/details\/([^/?#]+)/)?.[1];
+  return !!key(a) && key(a)===key(b);
+}
+async function addLibriVoxBook(id) {
+  const result=catalogResults.find(book=>book.id===id);if(!result)return;
+  const old=books.find(book=>sameLibriVoxBook(book,result)) || await db.get('books',id);
+  const book={...result,...old,inLibrary:true};
+  await db.put('books',book);
+  const index=books.findIndex(saved=>saved.id===book.id);if(index<0)books.push(book);else books[index]=book;
+  render();renderLibriVoxResults();toast(`“${book.title}” added to your library.`);
 }
 async function stopCurrentBook(id, save = true) {
   if(player.book?.id!==id)return;
@@ -250,7 +298,7 @@ async function fetchBookTracks(book) {
   await db.put('books',book);
 }
 async function applyRemoteProgress(book) {
-  if(book.demo || !book.plexTracks?.length || player.book?.id===book.id&&player.playing)return;
+  if(book.demo || book.localProgress || !book.plexTracks?.length || player.book?.id===book.id&&player.playing)return;
   const local=await db.get('progress',book.id)||progress.get(book.id);
   if(local?.dirty || await db.get('sync',book.id) || await db.get('sync',`mark:${book.id}`))return;
   // A cached server snapshot must not rewind a checkpoint just uploaded here.
@@ -273,11 +321,11 @@ async function applyRemoteProgress(book) {
 async function ensureBook(id,{refreshProgress=false}={}) {
   const book = books.find(b => b.id === id) || await db.get('books',id);
   if (!book) throw new Error('This book is no longer in the library. Refresh your server library to load it again.');
-  if(!book.demo && (!book.tracks?.length || book.tracksStale&&navigator.onLine)) {
+  if(!book.tracks?.length || book.tracksStale&&navigator.onLine) {
     if(!navigator.onLine)throw new Error('Connect to your server and download this book before listening offline.');
     try{await fetchBookTracks(book);}catch(error){if(!book.tracks?.length)throw error;}
   }
-  if(refreshProgress && !book.demo && navigator.onLine && getServer(book.serverId)?.url && !(player.book?.id===book.id&&player.playing) && Date.now()-(book.plexProgressFetchedAt||0)>10000) {
+  if(refreshProgress && !book.localProgress && navigator.onLine && getServer(book.serverId)?.url && !(player.book?.id===book.id&&player.playing) && Date.now()-(book.plexProgressFetchedAt||0)>10000) {
     try {
       const observedAt=Date.now();
       book.plexTracks=await plexAPI.bookProgress(getServer(book.serverId),book);
@@ -302,7 +350,7 @@ async function showDetail(id, tab = 'chapters') {
   try { book = await ensureBook(id); } catch(error) { trackError = error.message; }
   if (version !== modalVersion) return;
   const p = progress.get(id), d = downloadRecords.get(id);
-  showModal('', `<div class="detail-hero">${image(book)}<div><p class="eyebrow">${book.demo ? 'LIBRIVOX · FREE AUDIOBOOK' : `FROM YOUR ${providerName(getServer(book.serverId)).toUpperCase()} LIBRARY`}</p><h3>${e(book.title)}</h3><p>${e(book.author)}${book.year ? ` · ${book.year}` : ''}</p><p>${duration(sumDuration(book))} · ${book.tracks?.length || book.leafCount || '—'} audio files</p><div class="detail-actions"><button class="button" data-act="play-book" data-id="${e(id)}">${I('play')}${p?.elapsed && !p.completed ? 'Continue' : 'Play'}</button><button class="button secondary" data-act="${d?.status === 'complete' ? 'remove-download' : 'download'}" data-id="${e(id)}">${I('download')}${d?.status === 'complete' ? 'Remove download' : d && d.status !== 'error' ? d.status === 'paused' ? 'Resume download' : d.status : 'Download'}</button></div></div></div><div class="chips">${book.genres?.length ? `<span class="book-tags">${book.genres.map(g=>e(g)).join(', ')}</span>` : ''}${p?.completed ? '<span class="chip">Finished</span>' : ''}</div>${book.summary?.trim() ? `<p>${e(book.summary)}</p>` : ''}${book.demo && book.narrator ? `<p>Read by <strong>${e(book.narrator)}</strong> · <a href="${e(book.sourceURL)}" target="_blank" rel="noopener noreferrer">LibriVox recording ↗</a> · <a href="${e(book.archiveURL)}" target="_blank" rel="noopener noreferrer">Original audio ↗</a><br><small>${e(book.license)}. Full recording, ${book.recordingYear}.</small></p>` : ''}<div class="form-row"><button class="button outline" data-act="reading" data-id="${e(id)}">${I('heart')}${reading.includes(id) ? 'On your reading list' : 'Read later'}</button><button class="button outline" data-act="queue" data-id="${e(id)}">${I('queue')} Add to queue</button><button class="text-button" data-act="mark-finished" data-id="${e(id)}">${p?.completed ? 'Mark unplayed' : 'Mark finished'}</button></div>${trackError ? `<p class="error">${e(trackError)}</p>` : ''}<div class="detail-tabs"><button class="${tab === 'chapters' ? 'active' : ''}" data-act="detail-tab" data-value="chapters">Chapters</button><button class="${tab === 'bookmarks' ? 'active' : ''}" data-act="detail-tab" data-value="bookmarks">Bookmarks</button></div>${tab === 'chapters' ? `<div class="chapter-list">${chaptersFor(book).map((c,n) => `<button class="chapter-item ${player.book?.id === id && player.index === c.index && player.position >= c.position && player.position < c.position+c.duration ? 'active' : ''}" data-act="play-chapter" data-id="${e(id)}" data-index="${c.index}" data-position="${c.position}"><span>${String(n+1).padStart(2,'0')}</span><strong>${e(c.title)}</strong><small>${clock(c.duration)}</small></button>`).join('')}</div>` : bookmarks.filter(b => b.bookId === id).map(bookmarkRow).join('') || '<p>No bookmarks in this book yet.</p>'}`, 'book-modal');
+  showModal('', `<div class="detail-hero">${image(book)}<div><p class="eyebrow">${book.librivox ? 'LIBRIVOX · FREE AUDIOBOOK' : `FROM YOUR ${providerName(getServer(book.serverId)).toUpperCase()} LIBRARY`}</p><h3>${e(book.title)}</h3><p>${e(book.author)}${book.year ? ` · ${book.year}` : ''}</p><p>${duration(sumDuration(book))} · ${book.tracks?.length || book.leafCount || '—'} audio files</p><div class="detail-actions"><button class="button" data-act="play-book" data-id="${e(id)}">${I('play')}${p?.elapsed && !p.completed ? 'Continue' : 'Play'}</button><button class="button secondary" data-act="${d?.status === 'complete' ? 'remove-download' : 'download'}" data-id="${e(id)}">${I('download')}${d?.status === 'complete' ? 'Remove download' : d && d.status !== 'error' ? d.status === 'paused' ? 'Resume download' : d.status : 'Download'}</button></div></div></div><div class="chips">${book.genres?.length ? `<span class="book-tags">${book.genres.map(g=>e(g)).join(', ')}</span>` : ''}${p?.completed ? '<span class="chip">Finished</span>' : ''}</div>${book.summary?.trim() ? `<p>${e(book.summary)}</p>` : ''}${book.librivox ? `<p>${book.narrator ? `Read by <strong>${e(book.narrator)}</strong> · ` : ''} ${book.sourceURL ? `<a href="${e(book.sourceURL)}" target="_blank" rel="noopener noreferrer">LibriVox recording ↗</a> · ` : ''}<a href="${e(book.archiveURL)}" target="_blank" rel="noopener noreferrer">Original audio ↗</a><br><small>${e(book.license)}.</small></p>` : ''}<div class="form-row"><button class="button outline" data-act="reading" data-id="${e(id)}">${I('heart')}${reading.includes(id) ? 'On your reading list' : 'Read later'}</button><button class="button outline" data-act="queue" data-id="${e(id)}">${I('queue')} Add to queue</button><button class="text-button" data-act="mark-finished" data-id="${e(id)}">${p?.completed ? 'Mark unplayed' : 'Mark finished'}</button>${book.librivox && book.inLibrary ? `<button class="text-button" data-act="remove-librivox" data-id="${e(id)}">Remove from library</button>` : ''}</div>${trackError ? `<p class="error">${e(trackError)}</p>` : ''}<div class="detail-tabs"><button class="${tab === 'chapters' ? 'active' : ''}" data-act="detail-tab" data-value="chapters">Chapters</button><button class="${tab === 'bookmarks' ? 'active' : ''}" data-act="detail-tab" data-value="bookmarks">Bookmarks</button></div>${tab === 'chapters' ? `<div class="chapter-list">${chaptersFor(book).map((c,n) => `<button class="chapter-item ${player.book?.id === id && player.index === c.index && player.position >= c.position && player.position < c.position+c.duration ? 'active' : ''}" data-act="play-chapter" data-id="${e(id)}" data-index="${c.index}" data-position="${c.position}"><span>${String(n+1).padStart(2,'0')}</span><strong>${e(c.title)}</strong><small>${clock(c.duration)}</small></button>`).join('')}</div>` : bookmarks.filter(b => b.bookId === id).map(bookmarkRow).join('') || '<p>No bookmarks in this book yet.</p>'}`, 'book-modal');
   modal.setAttribute('aria-label',book.title);
 }
 function showNowPlaying() {
@@ -330,7 +378,7 @@ function updatePlayer() {
     $('#now-chapter').textContent = chapter?.title || player.track.title;
     $('#now-speed').textContent = `${player.speed}× speed`;
     $('#now-sleep').textContent = player.sleep ? player.sleep.type === 'chapter' ? 'End of chapter' : `${Math.max(0,Math.ceil((player.sleep.end-Date.now())/60000))} min left` : 'Sleep timer';
-    $('#now-offline').textContent = player.local ? '↓ Playing offline file' : b.demo ? 'LibriVox audiobook' : `Streaming from ${providerName(getServer(b.serverId))}`;
+    $('#now-offline').textContent = player.local ? '↓ Playing offline file' : `Streaming from ${providerName(getServer(b.serverId))}`;
   }
 }
 function showSpeed() {
@@ -421,11 +469,11 @@ async function loadLibrary(library,showProgress=false) {
     await applyRemoteProgress(b);
   }
   const savedBooks=await db.all('books');
-  books=[...savedBooks.filter(b=>!b.demo),...demoBooks.map(b=>structuredClone(savedBooks.find(saved=>saved.id===b.id)||b))];
+  books=savedBooks.filter(b=>!b.demo);
 }
 function refresh({quiet=false,force=true}={}) {
   if(refreshPromise)return refreshPromise;
-  if(!config.libraries.length)return quiet?Promise.resolve():showConnect();
+  if(!config.libraries.length)return quiet ? Promise.resolve() : (toast('Your added LibriVox books are ready. Use Find LibriVox books to add more.'),Promise.resolve());
   if(quiet&&!force&&Date.now()-lastPlexPull<30000)return Promise.resolve();
   refreshBusy=true;
   incomingSyncStatus='Reading played status and progress from your servers…';
@@ -560,6 +608,11 @@ document.addEventListener('click',async event=>{
   const {act,id,value,index,position}=target.dataset;
   try {
     switch(act) {
+      case 'find-librivox':showLibriVoxSearch();break;
+      case 'more-librivox':await searchLibriVox(catalogQuery,catalogField,true);break;
+      case 'add-librivox':await addLibriVoxBook(id);break;
+      case 'remove-librivox':{const book=books.find(b=>b.id===id);if(book){book.inLibrary=false;await db.put('books',book);}modal.close();render();toast('Book removed from your library. Downloads and listening progress are kept.');break;}
+      case 'more-books':shelfLimit+=60;render();break;
       case 'menu':document.body.classList.toggle('nav-open');break;
       case 'close':modal.close();break;
       case 'connect':showConnect();break;
@@ -596,9 +649,9 @@ document.addEventListener('click',async event=>{
       case 'queue-view':showQueue();break;
       case 'queue-up':{const n=Number(index);if(n>0)[queue[n-1],queue[n]]=[queue[n],queue[n-1]];await saveSettings();showQueue();break;}
       case 'queue-remove':queue.splice(Number(index),1);await saveSettings();showQueue();break;
-      case 'mark-finished':{const b=await ensureBook(id);const completed=!progress.get(id)?.completed;await stopCurrentBook(id);const p={...(progress.get(id)||{}),id,completed,trackIndex:completed?b.tracks.length-1:0,position:completed?b.tracks.at(-1).duration:0,elapsed:completed?sumDuration(b):0,updatedAt:Date.now(),localChangedAt:Date.now(),source:'local',dirty:!b.demo};await db.put('progress',p);progress.set(id,p);if(!b.demo){await db.delete('sync',id);await db.put('sync',{id:`mark:${id}`,bookId:id,serverId:b.serverId,book:{ratingKey:b.ratingKey,nativeItemType:b.nativeItemType,duration:sumDuration(b)},markPlayed:completed,updatedAt:p.updatedAt});await flushSync();}showDetail(id);render();break;}
-      case 'filter':filter=value;render();break;
-      case 'group':group=value;view='library';filter='all';render();break;
+      case 'mark-finished':{const b=await ensureBook(id);const completed=!progress.get(id)?.completed;await stopCurrentBook(id);const p={...(progress.get(id)||{}),id,completed,trackIndex:completed?b.tracks.length-1:0,position:completed?b.tracks.at(-1).duration:0,elapsed:completed?sumDuration(b):0,updatedAt:Date.now(),localChangedAt:Date.now(),source:'local',dirty:!b.localProgress};await db.put('progress',p);progress.set(id,p);if(!b.localProgress){await db.delete('sync',id);await db.put('sync',{id:`mark:${id}`,bookId:id,serverId:b.serverId,book:{ratingKey:b.ratingKey,nativeItemType:b.nativeItemType,duration:sumDuration(b)},markPlayed:completed,updatedAt:p.updatedAt});await flushSync();}showDetail(id);render();break;}
+      case 'filter':shelfLimit=60;filter=value;render();break;
+      case 'group':shelfLimit=60;group=value;view='library';filter='all';render();break;
       case 'persist':toast(await downloads.requestPersistence()?'Persistent storage granted. Your offline shelf is protected from automatic eviction when possible.':'Your browser manages storage. Keep backups and check downloads before a trip.');downloadStorageAt=0;render();break;
       case 'export':await exportBackup();toast('Your backup is ready. Keep it somewhere safe.');break;
       case 'import':$('#backup-file').click();break;
@@ -614,7 +667,8 @@ document.addEventListener('click',async event=>{
 document.addEventListener('submit',async event=>{
   event.preventDefault();const form=event.target;const data=new FormData(form);const button=$('[type=submit]',form);if(button)button.disabled=true;
   try {
-    if(form.id==='manual-connect') {const server=await plexAPI.validateServer({url:data.get('url'),token:data.get('token')});form.reset();await selectServer(server,false);}
+    if(form.id==='librivox-search'){await searchLibriVox(data.get('query'),data.get('field'));}
+    else if(form.id==='manual-connect') {const server=await plexAPI.validateServer({url:data.get('url'),token:data.get('token')});form.reset();await selectServer(server,false);}
     else if(form.id==='server-login') {const server=await plexAPI.login(Object.fromEntries(data));form.reset();await selectServer(server,false);}
     else if(form.id==='library-connect') {
       const chosen=selectedLibraries.find(l=>l.id===data.get('library'));const library={...chosen,serverId:selectedServer.id};
@@ -649,19 +703,19 @@ document.addEventListener('change',async event=>{
   const el=event.target;
   try {
     if(el.id==='server-provider'){clearTimeout(pinTimer);sessionStorage.removeItem('folio.pin');showConnect(el.value);}
-    if(el.id==='sort'){sort=el.value;render();}
+    if(el.id==='sort'){shelfLimit=60;sort=el.value;render();}
     if(isPlaybackSeek(el)) {
       const target=pendingSeeks.get(el) ?? Number(el.value);
       pendingSeeks.delete(el);activeSeeks.delete(el);
       try{await player.seek(target);}finally{updatePlayer();}
     }
-    if(el.dataset.setting){settings[el.dataset.setting]=el.type==='checkbox'?el.checked:Number(el.value);await saveSettings();await updateWakeLock();}
+    if(el.dataset.setting){settings[el.dataset.setting]=el.type==='checkbox'?el.checked:Number(el.value);await saveSettings();await updateWakeLock();if(el.dataset.setting==='includeLibrivox'){shelfLimit=60;if(!el.checked){catalogAbort?.abort();if($('#librivox-search'))modal.close();}render();}}
     if(['voice-boost','sound-bass','sound-treble'].includes(el.id))player.configureSound({voiceBoost:$('#voice-boost').checked,bass:$('#sound-bass').value,treble:$('#sound-treble').value});
     if(el.id==='volume'){settings.volume=Number(el.value);player.setVolume(el.value);await saveSettings();}
     if(el.id==='backup-file')await restoreBackup(el.files[0]);
   }catch(error){toast(error.message,true);}
 });
-$('#search').addEventListener('input',event=>{query=event.target.value;render();});
+$('#search').addEventListener('input',event=>{shelfLimit=60;query=event.target.value;render();});
 modal.addEventListener('close',()=>{modalVersion++;});
 modal.addEventListener('click',event=>{if(event.target===modal){const rect=modal.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)modal.close();}});
 document.addEventListener('keydown',event=>{
@@ -700,15 +754,14 @@ setInterval(flushSync,15000);
 setInterval(()=>{if(navigator.onLine&&!document.hidden)refresh({quiet:true,force:false});},60000);
 async function reloadState() {
   const [savedBooks,savedProgress,savedBookmarks,savedHistory,savedSettings,savedDownloads]=await Promise.all([db.all('books'),db.all('progress'),db.all('bookmarks'),db.all('history'),db.get('settings','preferences'),downloads.list()]);
-  const realBooks=savedBooks.filter(b=>!b.demo);
-  books=[...realBooks,...demoBooks.map(b=>structuredClone(savedBooks.find(s=>s.id===b.id)||b))];
+  books=savedBooks.filter(b=>!b.demo);
   progress=new Map(savedProgress.map(p=>[p.id,p]));bookmarks=savedBookmarks;history=savedHistory;
   settings={speed:1,smartRewind:true,rewindSeconds:10,volume:1,includeLibrivox:true,...savedSettings};reading=settings.reading||[];queue=settings.queue||[];Object.assign(player.settings,settings);
   downloadRecords=new Map(savedDownloads.map(d=>[d.id,d]));
 }
 async function boot() {
   try {
-    await downloads.ready;await removeLegacySamples(db,downloads);await reloadState();render();networkState();
+    await downloads.ready;await removeLegacySamples(db,downloads);await retireAutomaticCatalog(db);await reloadState();render();networkState();
     const pin=JSON.parse(sessionStorage.getItem('folio.pin')||'null');if(pin){showConnect();pollPin(pin.id,pin.startedAt);}
     const latest=books.filter(b=>progress.get(b.id)?.elapsed>0&&!progress.get(b.id).completed).sort((a,b)=>progress.get(b.id).updatedAt-progress.get(a.id).updatedAt)[0];
     if(latest?.tracks?.length){await workerReady;await player.open(latest,{autoplay:false});updatePlayer();}

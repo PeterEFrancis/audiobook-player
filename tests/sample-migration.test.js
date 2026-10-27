@@ -2,19 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { removeLegacySamples } from '../js/sample-migration.js';
 
-test('retiring synthetic samples awaits their downloads and preserves human samples and user data', async () => {
-  const humanId = 'demo:librivox:human-recording';
+test('retiring all built-in samples awaits downloads and preserves personal libraries and reading data', async () => {
+  const humanIds = ['walden_librivox', 'moby_dick_librivox', 'pride_prejudice_krs_librivox', 'adventuressherlockholmes_v4_1501_librivox'].map(id => `demo:librivox:${id}`);
   const stores = {
     books: new Map([
       ['demo:walden', { id: 'demo:walden', serverId: 'demo', demo: true }],
       ['demo:sea', { id: 'demo:sea', serverId: 'demo', demo: true }],
       ['demo:pride', { id: 'demo:pride', serverId: 'real-server', demo: false }],
-      [humanId, { id: humanId, serverId: 'demo', demo: true }],
+      ...humanIds.map(id => [id, { id, serverId: 'demo', demo: true }]),
       ['real:book', { id: 'real:book', serverId: 'real-server' }],
     ]),
     downloads: new Map([
       ['demo:walden', { id: 'demo:walden' }],
-      [humanId, { id: humanId }],
+      ...humanIds.map(id => [id, { id }]),
       ['real:book', { id: 'real:book' }],
     ]),
     progress: new Map([['demo:walden', { position: 30 }], ['real:book', { position: 99 }]]),
@@ -45,11 +45,15 @@ test('retiring synthetic samples awaits their downloads and preserves human samp
 
   await removeLegacySamples(db, downloads);
 
-  assert.deepEqual(removed, ['demo:walden']);
+  assert.deepEqual(removed, ['demo:walden', ...humanIds]);
   assert.ok(!stores.books.has('demo:walden'));
   assert.ok(!stores.books.has('demo:sea'));
   assert.deepEqual(stores.books.get('demo:pride'), before.books.get('demo:pride'));
-  for (const id of [humanId, 'real:book']) {
+  for (const id of humanIds) {
+    assert.ok(!stores.books.has(id));
+    assert.ok(!stores.downloads.has(id));
+  }
+  for (const id of ['real:book']) {
     assert.deepEqual(stores.books.get(id), before.books.get(id));
     assert.deepEqual(stores.downloads.get(id), before.downloads.get(id));
   }
@@ -58,5 +62,5 @@ test('retiring synthetic samples awaits their downloads and preserves human samp
   }
 
   await removeLegacySamples(db, downloads);
-  assert.deepEqual(removed, ['demo:walden'], 'subsequent boots leave retired samples alone');
+  assert.deepEqual(removed, ['demo:walden', ...humanIds], 'subsequent boots leave retired samples alone');
 });

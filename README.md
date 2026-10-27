@@ -1,6 +1,6 @@
 # Folio
 
-A responsive, installable audiobook player for Plex, Audiobookshelf, Jellyfin, and Emby, with offline downloads. Phones use bottom tabs, touch controls, bottom sheets, and a full-screen listening view. Computers use a wider layout with a sidebar and expanded shelves and controls. `index.html` is the separate public information and installation page; `app.html` opens the app. Folio is inspired by audiobook apps such as Prologue and is not affiliated with Prologue or the supported server projects.
+A responsive, installable audiobook player for Plex, Audiobookshelf, Jellyfin, Emby, and selected LibriVox books, with offline downloads. Phones use bottom tabs, touch controls, bottom sheets, and a full-screen listening view. Computers use a wider layout with a sidebar and expanded shelves and controls. `index.html` is the separate public information and installation page; `app.html` opens the app. Folio is inspired by audiobook apps such as Prologue and is not affiliated with Prologue or the supported server projects.
 
 ## Run locally
 
@@ -14,7 +14,7 @@ Open [the landing page](http://127.0.0.1:4173/) or [the player](http://127.0.0.1
 
 ## Connect a server
 
-In **More**, choose the server type when adding a connection. Plex sign-in and automatic server discovery remain available. Audiobookshelf, Jellyfin, and Emby use a server URL with a username and password or an access token. Authentication happens directly with the selected server.
+In **Settings**, choose the server type when adding a connection. Plex sign-in and automatic server discovery remain available. Audiobookshelf, Jellyfin, and Emby use a server URL with a username and password or an access token. Authentication happens directly with the selected server.
 
 | Server | Library setup |
 | --- | --- |
@@ -30,7 +30,7 @@ In **More**, choose the server type when adding a connection. Plex sign-in and a
 
 On iPhone or iPad, open the site in Safari and use **Share → Add to Home Screen**, then launch the installed app **before signing in**. The installed app can have separate storage from a browser tab. On desktop and Android, use the browser's install option when available. Installation downloads a web app, not a native application or audiobook collection.
 
-All providers must be reachable from your device with a valid HTTPS certificate and browser-compatible CORS responses. Use the complete server URL, including any configured base path. If a server or reverse proxy blocks cross-origin requests, configure it to allow the Folio site’s origin and the authentication headers used by its API. Folio has no backend proxy. Plex's secure `plex.direct` connections are supported; check secure connections and remote access in Plex if discovery succeeds but connection fails. Manual HTTP connections are limited to localhost development while the page itself uses HTTP. A GitHub Pages HTTPS site cannot connect to an ordinary HTTP LAN server.
+Personal servers must be reachable from your device with a valid HTTPS certificate and browser-compatible CORS responses. Use the complete server URL, including any configured base path. If a server or reverse proxy blocks cross-origin requests, configure it to allow the Folio site’s origin and the authentication headers used by its API. Folio has no backend proxy. Plex's secure `plex.direct` connections are supported; check secure connections and remote access in Plex if discovery succeeds but connection fails. Manual HTTP connections are limited to localhost development while the page itself uses HTTP. A GitHub Pages HTTPS site cannot connect to an ordinary HTTP LAN server.
 
 ## Offline listening
 
@@ -52,19 +52,20 @@ Folio supplies the book title, author, cover, playback position, and media contr
 
 ## Reading state and privacy
 
-Server connection details and access tokens stay in this browser's `localStorage`. Metadata, progress, bookmarks, listening history, download records, and pending sync work use IndexedDB; downloaded media uses Cache Storage. Requests go directly to your server; Plex sign-in also uses Plex’s authentication service. There is no Folio backend, account service, or analytics service, and no credential belongs in this repository or deployment configuration.
+Server connection details and access tokens stay in this browser's `localStorage`. Metadata, progress, bookmarks, listening history, download records, and pending sync work use IndexedDB; downloaded media uses Cache Storage. Requests go directly to your server; Plex sign-in also uses Plex’s authentication service. LibriVox searches use the LibriVox audio collection on Internet Archive, whose browser-compatible API supports partial titles and empty results. Selected books stream audio from Internet Archive. There is no Folio backend, account service, or analytics service, and no credential belongs in this repository or deployment configuration.
 
 Sync works in both directions. Connecting, launching, refreshing, returning to the app, and periodic checks while it is open import the connected server’s played/unplayed status and resume positions across the library. Starting playback also checks the selected book's latest progress. Remote changes appear in the bookshelf, Finished filter, and Continue listening, including books never opened in Folio. Opening a paused book does not send a playback update.
 
 Playback sends position updates and finished/played changes back to the matching server. Plex uses track positions, Jellyfin and Emby use item playback progress, and Audiobookshelf uses whole-book progress. Offline changes retry when connected; the pending queue retains the latest position per book and sends changes in order. Unsynced local progress takes precedence, and incoming refreshes never interrupt active playback. When local changes are synced, fresh server snapshots can restore another client’s progress or unplayed resets. Bookmarks, lists, and listening history stay on this device; use the token-free JSON backup and restore controls to move reading data between devices. Audio files are not included in backups.
 
-Older Jellyfin versions can use playback-session reports when the direct progress API is unavailable. Folio confirms the stored position before clearing a queued checkpoint; if the server cannot retain it, the local checkpoint stays pending and More shows the sync error.
+Older Jellyfin versions can use playback-session reports when the direct progress API is unavailable. Folio confirms the stored position before clearing a queued checkpoint; if the server cannot retain it, the local checkpoint stays pending and Settings shows the sync error.
 
 ## Features and platform limits
 
 | Capability | Folio |
 | --- | --- |
 | Plex, Audiobookshelf, Jellyfin, and Emby libraries | Supported |
+| LibriVox catalog search, streaming, and offline downloads | Search by title or author and add selected books |
 | Search, sorting, authors, collections | Supported where supplied by the server |
 | Continuous playback, track and embedded chapters, whole-book seeking | Supported |
 | Playback speed, configurable skips, smart rewind | Supported |
@@ -80,14 +81,11 @@ Older Jellyfin versions can use playback-session reports when the direct progres
 
 Folio streams and downloads original files from all providers; it does not transcode. A server’s own clients may support formats that the browser cannot play directly. MP3 and AAC in M4A/M4B are common browser-compatible choices. Other codecs depend on the device and browser. A downloaded file still needs a supported codec. Native audiobook apps can provide OS integrations that a PWA cannot reproduce; Folio does not claim complete feature parity.
 
-The free shelf contains complete, human-read LibriVox audiobooks, with original SVG covers:
+Choose **Find LibriVox books** in Library to search the public catalog by title or author without an account. Select **Add to library** for the recordings you want. Folio saves only your selected books; it does not import the entire catalog. **Settings → Your server libraries → Enable LibriVox catalog search** controls access to this search and is enabled by default.
 
-- [Walden](https://librivox.org/walden-by-henry-david-thoreau/), read by Gord Mackenzie (2006).
-- [Moby-Dick](https://librivox.org/moby-dick-by-herman-melville/), read by Stewart Wills (2007).
-- [Pride and Prejudice](https://librivox.org/pride-and-prejudice-by-jane-austen-2/), read by Karen Savage (2007).
-- [The Adventures of Sherlock Holmes](https://librivox.org/the-adventures-of-sherlock-holmes-version-4-by-sir-arthur-conan-doyle/), read by David Clarke (2015).
+Opening an added LibriVox book retrieves its chapters; Play streams the original MP3s from Internet Archive. Download uses the same optional offline queue as your other libraries. Adding a book does not download audiobook audio. LibriVox progress, bookmarks, and lists stay on this device. Disabling catalog search leaves your added books and saved downloads available. Recordings are public domain in the USA; each book links to its original audio and, when available, its LibriVox recording. Availability depends on LibriVox and Internet Archive.
 
-LibriVox identifies these volunteer recordings as public domain in the USA. Each book’s details show its narrator, original recording, and Internet Archive audio source. Chapter MP3s stream directly from Internet Archive and can be downloaded through Folio for offline listening. Opening the app alone does not download the audio; complete books range from approximately 300 to 680 MiB. Audio hosting availability still depends on Internet Archive. Chapter durations and sizes come from its recording metadata. The previous synthetic sample files and their cached sample downloads are retired on update; personal server libraries and reading data are retained.
+The previous four built-in LibriVox sample entries and their saved audio are removed on update, along with older synthetic samples. Earlier automatic catalog imports are removed except books already downloaded, started, or saved. Personal server books and reading data are preserved. You can search for and add any of the former sample recordings again.
 
 ## GitHub Pages
 
@@ -107,9 +105,9 @@ The workflow copies only the public HTML, manifest, service worker, CSS, JavaScr
 | `js/jellyfin.js` | Jellyfin and Emby authentication, libraries, original audio, and progress |
 | `js/player.js` | Playback, sleep timer, audio controls, media session |
 | `js/downloads.js`, `js/background-downloads-sw.js`, `sw.js` | Download queue, browser background transfers, cached shell, offline range responses |
-| `js/demo.js`, `js/sample-audio.js`, `js/sample-migration.js` | Human-read sample library, source credits, and retirement of synthetic samples |
+| `js/librivox.js`, `js/librivox-catalog.js`, `js/sample-migration.js` | LibriVox search and playback provider, catalog migration, and retirement of built-in samples |
 | `js/db.js` | Local IndexedDB storage |
 | `manifest.webmanifest`, `assets/` | Installation metadata, icons and covers |
 | `tests/` | Focused automated regression checks |
 
-API references: [Plex](https://developer.plex.tv/pms/), [Audiobookshelf](https://api.audiobookshelf.org/), [Jellyfin](https://api.jellyfin.org/), and [Emby authentication](https://dev.emby.media/doc/restapi/User-Authentication.html).
+API references: [Internet Archive](https://archive.org/developers/), [LibriVox](https://librivox.org/api/info), [Plex](https://developer.plex.tv/pms/), [Audiobookshelf](https://api.audiobookshelf.org/), [Jellyfin](https://api.jellyfin.org/), and [Emby authentication](https://dev.emby.media/doc/restapi/User-Authentication.html).

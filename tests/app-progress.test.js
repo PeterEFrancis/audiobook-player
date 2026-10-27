@@ -16,7 +16,7 @@ function setup(local) {
   if (local) stores.get('progress').set(book.id, structuredClone(local));
   const clock = {value: 1000};
   const context = vm.createContext({
-    structuredClone, plexProgress, sumDuration, books: [], progress: new Map(local ? [[book.id, structuredClone(local)]] : []), demoBooks: [],
+    structuredClone, plexProgress, sumDuration, books: [], progress: new Map(local ? [[book.id, structuredClone(local)]] : []),
     Date: {now: () => clock.value}, getServer: () => ({}), connectionStatus: () => {}, syncing: false, outgoingSyncError: '', view:'library', navigator: {onLine: true},
     player: {book: null, playing: false, generation: 0}, stopCurrentBook: async () => {},
     modal: {classList: {contains: () => false}, close: () => {}},
@@ -43,17 +43,17 @@ test('initial library import shows server progress before any book details open'
 
 test('connecting and refreshing a server retains free audiobooks without duplicates or losing saved metadata', async () => {
   const {context, stores} = setup();
-  const free = {id: 'demo:librivox:free', demo: true, serverId: 'demo', title: 'Free', tracks: [{id: 'free-file', duration: 60}]};
-  context.demoBooks = [free];
+  const free = {id: 'librivox:47', librivox: true, localProgress: true, serverId: 'librivox', title: 'Free', tracks: [{id: 'free-file', duration: 60}]};
+  stores.get('books').set(free.id, free);
   await context.loadLibrary(library);
-  assert.deepEqual(Array.from(context.books, item => item.id), [book.id, free.id]);
+  assert.deepEqual(Array.from(context.books, item => item.id), [free.id, book.id]);
 
   const cached = {...free, tracks: [{id: 'free-file', duration: 61}], narrator: 'Saved narrator'};
   const savedProgress = {id: free.id, elapsed: 25, dirty: false};
   stores.get('books').set(free.id, cached);
   stores.get('progress').set(free.id, savedProgress);
   await context.loadLibrary(library);
-  assert.deepEqual(Array.from(context.books, item => item.id), [book.id, free.id]);
+  assert.deepEqual(Array.from(context.books, item => item.id), [free.id, book.id]);
   assert.equal(context.books.find(item => item.id === free.id).narrator, 'Saved narrator');
   assert.equal(context.books.find(item => item.id === free.id).tracks[0].duration, 61);
   assert.deepEqual(stores.get('progress').get(free.id), savedProgress);
@@ -150,4 +150,53 @@ test('queued played changes recover provider metadata from the saved book', asyn
   assert.equal(sent.nativeItemType, 'MusicAlbum');
   assert.equal(sent.duration, 300);
   assert.equal(stores.get('sync').size, 0);
+});
+
+test('LibriVox refresh never imports a remote unplayed reset', async () => {
+  const local = {id: book.id, elapsed: 175, dirty: false};
+  const {context, saved} = setup(local);
+  await context.applyRemoteProgress({...book, localProgress:true, plexTracks:rows, plexProgressFetchedAt:1000});
+  assert.deepEqual(saved(), local);
+});
+
+test('the library includes only selected LibriVox books and keeps them when search is disabled', () => {
+  const context=vm.createContext({settings:{includeLibrivox:true},books:[{id:'librivox:47',librivox:true},{id:'librivox:153',librivox:true,inLibrary:true},{id:'personal'}]});
+  vm.runInContext(extract('function libraryBooks()', 'function activeLibraries()'),context);
+  assert.deepEqual(Array.from(context.libraryBooks(),book=>book.id),['librivox:153','personal']);
+  context.settings.includeLibrivox=false;
+  assert.deepEqual(Array.from(context.libraryBooks(),book=>book.id),['librivox:153','personal']);
+});
+
+test('catalog search stores no books until a result is explicitly added', async () => {
+  const result={id:'librivox:47',title:'A book',librivox:true,inLibrary:false};
+  const writes=[];
+  const context=vm.createContext({
+    settings:{includeLibrivox:true},books:[],catalogQuery:'',catalogField:'title',catalogResults:[],catalogOffset:0,catalogHasMore:false,catalogSearching:false,catalogError:'',catalogSearched:false,catalogAbort:null,catalogVersion:0,AbortController,
+    plexAPI:{clients:{librivox:{search:async()=>({books:[result],nextOffset:1,hasMore:false})}}},
+    db:{get:async()=>undefined,put:async(store,book)=>writes.push({store,book})},
+    render(){},renderLibriVoxResults(){},toast(){},
+  });
+  vm.runInContext(extract('async function searchLibriVox(', 'async function stopCurrentBook('),context);
+  await context.searchLibriVox('a book');
+  assert.equal(writes.length,0);
+  assert.equal(context.books.length,0);
+  await context.addLibriVoxBook(result.id);
+  assert.equal(writes.length,1);
+  assert.equal(writes[0].book.inLibrary,true);
+  assert.equal(context.books.length,1);
+  await context.addLibriVoxBook(result.id);
+  assert.equal(context.books.length,1);
+});
+
+test('adding an Archive search result reuses the existing LibriVox recording and cached tracks', async () => {
+  const existing={id:'librivox:549',librivox:true,inLibrary:false,archiveURL:'https://www.archive.org/details/walden_librivox',tracks:[{id:'saved-chapter',duration:60}]};
+  const result={id:'librivox:archive:walden_librivox',archiveIdentifier:'walden_librivox',title:'Walden',librivox:true,inLibrary:false};
+  let stored;
+  const context=vm.createContext({books:[existing],catalogResults:[result],db:{put:async(_store,book)=>{stored=book;}},render(){},renderLibriVoxResults(){},toast(){}});
+  vm.runInContext(extract('function sameLibriVoxBook(', 'async function stopCurrentBook('),context);
+  await context.addLibriVoxBook(result.id);
+  assert.equal(context.books.length,1);
+  assert.equal(stored.id,existing.id);
+  assert.equal(stored.tracks[0].id,'saved-chapter');
+  assert.equal(stored.inLibrary,true);
 });

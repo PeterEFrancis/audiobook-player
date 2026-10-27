@@ -261,7 +261,8 @@ export class Player extends EventTarget {
     const preferences = {speed: this.speed, voiceBoost: !!this.sound?.voiceBoost, bass: this.sound?.bass || 0, treble: this.sound?.treble || 0};
     const session = this.session ? {...this.session, updatedAt: Date.now()} : null;
     const updatedAt = Date.now();
-    const progress = {id: book.id, trackIndex: this.index, position: this.position, elapsed: this.elapsed, duration: sumDuration(book), ...preferences, completed: !!this.completed, updatedAt, localChangedAt: updatedAt, source: 'local', dirty: book.serverId !== 'demo'};
+    const remoteProgress = book.serverId !== 'demo' && !book.localProgress;
+    const progress = {id: book.id, trackIndex: this.index, position: this.position, elapsed: this.elapsed, duration: sumDuration(book), ...preferences, completed: !!this.completed, updatedAt, localChangedAt: updatedAt, source: 'local', dirty: remoteProgress};
     const sync = {id: book.id, serverId: book.serverId, track: this.track, position: progress.position, duration: this.track.duration, state: this.playing ? 'playing' : 'stopped', updatedAt: progress.updatedAt};
     const saving = this.saves.catch(() => {}).then(async () => {
       const current = await db.get('progress', book.id);
@@ -274,7 +275,7 @@ export class Player extends EventTarget {
       const updated = {...current, ...progress};
       await db.put('progress', updated);
       if (session) await db.put('history', session);
-      if (book.serverId !== 'demo') {
+      if (remoteProgress) {
         await db.put('sync', sync);
         this.dispatchEvent(new CustomEvent('syncneeded'));
       }

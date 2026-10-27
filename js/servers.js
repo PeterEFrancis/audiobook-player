@@ -1,8 +1,9 @@
 import { PlexClient } from './plex.js';
 import { AudiobookshelfClient } from './audiobookshelf.js';
 import { JellyfinClient } from './jellyfin.js';
+import { LibriVoxAPI } from './librivox.js';
 
-const names = { plex: 'Plex', audiobookshelf: 'Audiobookshelf', jellyfin: 'Jellyfin', emby: 'Emby' };
+const names = { plex: 'Plex', audiobookshelf: 'Audiobookshelf', jellyfin: 'Jellyfin', emby: 'Emby', librivox: 'LibriVox' };
 export const providerName = server => names[typeof server === 'string' ? server : server?.provider || 'plex'] || 'Server';
 
 // Existing connections without a provider remain Plex connections and keep their IDs.
@@ -11,11 +12,12 @@ export class ServerClient {
     this.clients = {
       plex: new PlexClient(options), audiobookshelf: new AudiobookshelfClient(options),
       jellyfin: new JellyfinClient({ ...options, provider: 'jellyfin' }), emby: new JellyfinClient({ ...options, provider: 'emby' }),
+      librivox: new LibriVoxAPI(),
     };
   }
   client(server) {
     const client = this.clients[server?.provider || 'plex'];
-    if (!client) throw new Error('This server type is not supported. Reconnect it from More.');
+    if (!client) throw new Error('This server type is not supported. Reconnect it from Settings.');
     return client;
   }
   createPin(...args) { return this.clients.plex.createPin(...args); }

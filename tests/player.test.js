@@ -191,3 +191,13 @@ test('progress writes snapshot their book and count background playback without 
   player.accountListening();
   assert.equal(player.session.listened, listened);
 });
+
+test('LibriVox saves playback locally without queueing server sync', async t => {
+  const {player,writes}=setup(t);
+  await player.open({...book('librivox:47','librivox'),localProgress:true},{autoplay:false});
+  player.audio.loadMetadata(100);
+  await player.seek(25);
+  await player.persist();
+  assert.ok(writes.some(write=>write.store==='progress' && write.value.elapsed===25 && write.value.dirty===false));
+  assert.ok(!writes.some(write=>write.store==='sync'));
+});

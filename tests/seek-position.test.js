@@ -12,7 +12,7 @@ test('chapter jumps update focused seek markers while active dragging alone pres
   for (const prefix of ['mini', 'now']) for (const part of ['time', 'seek', 'play', 'duration']) selectors.push(`${prefix}-${part}`);
   const nodes = new Map(selectors.map(id => [`#${id}`, {dataset: {}, value: 0, setAttribute() {}}]));
   const mini = nodes.get('#mini-seek'), now = nodes.get('#now-seek');
-  const book = {id: 'book', title: 'Book', author: 'Author', demo: true, tracks: [{title: 'First', duration: 100}, {title: 'Second', duration: 100}]};
+  const book = {id: 'book', title: 'Book', author: 'Author', serverId: 'librivox', localProgress: true, tracks: [{title: 'First', duration: 100}, {title: 'Second', duration: 100}]};
   const player = {
     book, index: 0, position: 25, pendingSeek: null, playing: false, speed: 1,
     get elapsed() { return absolutePosition(this.book, this.index, this.pendingSeek ?? this.position); },
@@ -20,7 +20,7 @@ test('chapter jumps update focused seek markers while active dragging alone pres
   };
   const activeSeeks = new Set();
   const document = {activeElement: now};
-  const context = vm.createContext({player, activeSeeks, document, clock, sumDuration, chaptersFor, $: selector => nodes.get(selector), cover: () => '/cover.svg', I: () => ''});
+  const context = vm.createContext({player, providerName:()=> 'LibriVox', getServer:()=>({provider:'librivox'}), activeSeeks, document, clock, sumDuration, chaptersFor, $: selector => nodes.get(selector), cover: () => '/cover.svg', I: () => ''});
   vm.runInContext(rendering, context);
   context.updatePlayer();
   assert.equal(Number(now.value), 25);
