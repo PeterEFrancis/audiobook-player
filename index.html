@@ -52,8 +52,6 @@
         <div class="install-intro">
           <h2>Install Folio.</h2>
           <p>Add it to your home screen. Free, with no subscription.</p>
-          <button class="button button-light" id="install-button" type="button">Install Folio <span aria-hidden="true">↗</span></button>
-          <p class="install-message" id="install-message" role="status"></p>
         </div>
         <div class="install-guide">
           <div class="install-tabs" role="tablist" aria-label="Installation device">
@@ -93,5 +91,7 @@
     </section>
   </main>
   <footer class="site-footer section-width"><a class="wordmark" href="./index.html">folio<span class="wordmark-dot">.</span></a><a href="https://github.com/PeterEFrancis/audiobook-player">GitHub <span aria-hidden="true">↗</span></a></footer>
+  <!-- Keep older cached install scripts working during an update. -->
+  <span id="install-button" hidden></span><span id="install-message" hidden></span>
 </body>
 </html>
