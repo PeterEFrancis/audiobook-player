@@ -21,3 +21,5 @@
 @media(max-width:899px){.book-modal{transition:transform .18s ease-out}.book-modal.is-dragging{transition:none}.book-modal .modal-content{padding-top:0}.book-modal .modal-content:before,.book-modal .modal-header{display:none}.book-modal .modal-handle{display:flex;align-items:center;justify-content:center;width:calc(100% + 44px);height:44px;margin:0 -22px;padding:0;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab}.book-modal .modal-handle:before{content:'';width:34px;height:4px;background:#c7d0bc;border-radius:4px}.book-modal.is-dragging .modal-handle{cursor:grabbing}}
 @media(max-width:370px){.book-modal .modal-handle{width:calc(100% + 36px);margin-inline:-18px}}
 @media(min-width:900px){.sidebar>nav{margin-top:22px}}
+.book-modal .modal-handle:focus-visible{outline:none}
+.book-modal .modal-handle:focus-visible:before{outline:2px solid #819d60;outline-offset:4px}
