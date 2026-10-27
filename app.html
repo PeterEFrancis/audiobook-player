@@ -34,13 +34,13 @@
     </nav>
     <div class="sidebar-bottom">
       <div class="server-label"><span class="status-dot"></span><div><strong id="source-label">The sample shelf</strong><span id="source-detail">Make yourself at home</span></div></div>
-      <button class="nav-item" data-view="settings"><span data-icon="settings"></span>Settings</button>
+      <button class="nav-item" data-view="settings"><span data-icon="more"></span>Settings</button>
       <a class="sidebar-help" href="./index.html#install">Install Folio <span>↗</span></a>
     </div>
   </aside>
   <div class="workspace">
     <header class="topbar">
-      <div class="app-topline"><button class="app-wordmark" data-view="library" aria-label="Folio library">folio<span>.</span></button><span id="network-label" class="network-label"><span class="status-dot"></span>Online</span><button class="button connect-button" data-act="connect"><span data-icon="plex"></span><span>Connect Plex</span></button><button class="icon-button" data-view="settings" aria-label="Settings"><span data-icon="settings"></span></button></div>
+      <div class="app-topline"><button class="app-wordmark" data-view="library" aria-label="Folio library">folio<span>.</span></button><span id="network-label" class="network-label"><span class="status-dot"></span>Online</span></div>
       <label class="search"><span data-icon="search"></span><input id="search" type="search" placeholder="Books, authors, collections" aria-label="Search library"></label>
       <span id="view-label" class="desktop-view-label">Library</span>
     </header>
@@ -60,6 +60,8 @@
   </nav>
   <dialog id="modal" class="modal"><div id="modal-content"></div></dialog>
   <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <!-- Status target for older cached clients while the new service worker installs. -->
+  <span class="connect-button" hidden><span></span></span>
   <noscript><p>Folio needs JavaScript to connect to Plex and play your audiobooks.</p></noscript>
 </body>
 </html>

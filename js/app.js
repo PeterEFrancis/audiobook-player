@@ -9,7 +9,7 @@ const paths = {
   library:'M4 4h4v16H4zM10 4h4v16h-4zM16 5l4-1 3 15-4 1z', headphones:'M4 14v-3a8 8 0 0116 0v3M4 12H2v7h5v-7H4m16 0h2v7h-5v-7h3',
   download:'M12 3v12m-5-5l5 5 5-5M4 16v5h16v-5',heart:'M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 00-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 000-7.8z',
   bookmark:'M6 3h12v18l-6-4-6 4z',collection:'M3 6h7l2 2h9v12H3zM3 6V3h7l2 2h9v3',history:'M3 4v6h6M3 10a9 9 0 119 11M12 7v6l4 2',
-  settings:'M9 3h6l1 4 4 1 2 5-3 3v4l-5 2-3-3H7l-3-5 2-3V7zM15 12a3 3 0 11-6 0 3 3 0 016 0',search:'M20 20l-5-5M17 10a7 7 0 11-14 0 7 7 0 0114 0',
+  search:'M20 20l-5-5M17 10a7 7 0 11-14 0 7 7 0 0114 0',
   plex:'M8 3h5l7 9-7 9H8l7-9z',menu:'M3 6h18M3 12h18M3 18h18',play:'M7 4l14 8-14 8z',pause:'M6 4h4v16H6zM14 4h4v16h-4z',
   back:'M4 9a8 8 0 111 9M3 3v7h7',forward:'M20 9a8 8 0 10-1 9M21 3v7h-7',moon:'M20 15a8 8 0 01-11-11 9 9 0 1011 11z',
   expand:'M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5',close:'M5 5l14 14M19 5L5 19',more:'M5 12h.1M12 12h.1M19 12h.1',check:'M4 12l5 5L20 6',
@@ -134,7 +134,6 @@ function render() {
   $('#download-count').textContent = [...downloadRecords.values()].filter(d => d.status === 'complete').length;
   $('#source-label').textContent = config.libraries.length ? config.libraries[0].title : 'The sample shelf';
   $('#source-detail').textContent = config.servers.length ? getServer(config.libraries[0]?.serverId)?.name || 'Plex connected' : 'Make yourself at home';
-  $('.connect-button span:last-child').textContent = config.servers.length ? 'Plex connected' : 'Connect Plex';
   if (['library','continue','reading'].includes(view)) renderShelf();
   else if (view === 'downloads') renderDownloads().catch(error => toast(error.message,true));
   else if (view === 'bookmarks') renderBookmarks();
