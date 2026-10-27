@@ -41,6 +41,24 @@ test('initial library import shows server progress before any book details open'
   assert.equal(context.books[0].tracks, undefined);
 });
 
+test('connecting and refreshing a server retains free audiobooks without duplicates or losing saved metadata', async () => {
+  const {context, stores} = setup();
+  const free = {id: 'demo:librivox:free', demo: true, serverId: 'demo', title: 'Free', tracks: [{id: 'free-file', duration: 60}]};
+  context.demoBooks = [free];
+  await context.loadLibrary(library);
+  assert.deepEqual(Array.from(context.books, item => item.id), [book.id, free.id]);
+
+  const cached = {...free, tracks: [{id: 'free-file', duration: 61}], narrator: 'Saved narrator'};
+  const savedProgress = {id: free.id, elapsed: 25, dirty: false};
+  stores.get('books').set(free.id, cached);
+  stores.get('progress').set(free.id, savedProgress);
+  await context.loadLibrary(library);
+  assert.deepEqual(Array.from(context.books, item => item.id), [book.id, free.id]);
+  assert.equal(context.books.find(item => item.id === free.id).narrator, 'Saved narrator');
+  assert.equal(context.books.find(item => item.id === free.id).tracks[0].duration, 61);
+  assert.deepEqual(stores.get('progress').get(free.id), savedProgress);
+});
+
 test('server reset overrides clean local timestamps while retaining playback preferences', async () => {
   const {context, saved} = setup({id: book.id, elapsed: 175, completed: true, updatedAt: 999999, dirty: false, speed: 1.75});
   await context.loadLibrary(library);

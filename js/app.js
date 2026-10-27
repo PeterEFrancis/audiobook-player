@@ -413,8 +413,8 @@ async function loadLibrary(library,showProgress=false) {
     await db.put('books',b);
     await applyRemoteProgress(b);
   }
-  books=(await db.all('books')).filter(b=>!b.demo);
-  if(!books.length) books=demoBooks.map(b=>structuredClone(b));
+  const savedBooks=await db.all('books');
+  books=[...savedBooks.filter(b=>!b.demo),...demoBooks.map(b=>structuredClone(savedBooks.find(saved=>saved.id===b.id)||b))];
 }
 function refresh({quiet=false,force=true}={}) {
   if(refreshPromise)return refreshPromise;
@@ -693,8 +693,7 @@ setInterval(()=>{if(navigator.onLine&&!document.hidden)refresh({quiet:true,force
 async function reloadState() {
   const [savedBooks,savedProgress,savedBookmarks,savedHistory,savedSettings,savedDownloads]=await Promise.all([db.all('books'),db.all('progress'),db.all('bookmarks'),db.all('history'),db.get('settings','preferences'),downloads.list()]);
   const realBooks=savedBooks.filter(b=>!b.demo);
-  books=realBooks.length?realBooks:demoBooks.map(b=>structuredClone(savedBooks.find(s=>s.id===b.id)||b));
-  for(const b of savedBooks.filter(b=>b.demo))if(!books.some(x=>x.id===b.id)&&savedDownloads.some(d=>d.id===b.id))books.push(b);
+  books=[...realBooks,...demoBooks.map(b=>structuredClone(savedBooks.find(s=>s.id===b.id)||b))];
   progress=new Map(savedProgress.map(p=>[p.id,p]));bookmarks=savedBookmarks;history=savedHistory;
   settings={speed:1,smartRewind:true,rewindSeconds:10,volume:1,...savedSettings};reading=settings.reading||[];queue=settings.queue||[];Object.assign(player.settings,settings);
   downloadRecords=new Map(savedDownloads.map(d=>[d.id,d]));
