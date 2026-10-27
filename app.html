@@ -20,7 +20,6 @@
   <div class="sidebar-shade" data-act="menu"></div>
   <aside class="sidebar" aria-label="Main navigation">
     <a class="brand" href="./index.html"><span class="brand-mark" aria-hidden="true">f.</span>folio<span class="brand-dot">●</span></a>
-    <div class="sidebar-caption">A GOOD PLACE TO GET LOST</div>
     <nav>
       <span class="nav-section">YOUR SPACE</span>
       <button class="nav-item active" data-view="library"><span data-icon="library"></span>Your library</button>
@@ -33,7 +32,6 @@
       <button class="nav-item" data-view="history"><span data-icon="history"></span>Listening history</button>
     </nav>
     <div class="sidebar-bottom">
-      <div class="server-label"><span class="status-dot"></span><div><strong id="source-label">The free audiobook shelf</strong><span id="source-detail">Make yourself at home</span></div></div>
       <button class="nav-item" data-view="settings"><span data-icon="more"></span>Settings</button>
       <a class="sidebar-help" href="./index.html#install">Install Folio <span>↗</span></a>
     </div>
@@ -63,5 +61,7 @@
   <!-- Status target for older cached clients while the new service worker installs. -->
   <span class="connect-button" hidden><span></span></span>
   <noscript><p>Folio needs JavaScript to connect to your server and play your audiobooks.</p></noscript>
+  <!-- Compatibility targets for older cached clients during updates. -->
+  <span id="source-label" hidden></span><span id="source-detail" hidden></span>
 </body>
 </html>

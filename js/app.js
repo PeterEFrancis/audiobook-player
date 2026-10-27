@@ -185,8 +185,6 @@ function render() {
   });
   $('.search').hidden = ['settings','history'].includes(view);
   $('#download-count').textContent = [...downloadRecords.values()].filter(d => d.status === 'complete').length;
-  $('#source-label').textContent = config.libraries.length ? config.libraries[0].title : 'The free audiobook shelf';
-  $('#source-detail').textContent = config.servers.length ? getServer(config.libraries[0]?.serverId)?.name || 'Plex connected' : 'Make yourself at home';
   if (['library','continue','reading'].includes(view)) renderShelf();
   else if (view === 'downloads') renderDownloads().catch(error => toast(error.message,true));
   else if (view === 'bookmarks') renderBookmarks();
