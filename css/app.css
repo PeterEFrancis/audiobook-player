@@ -15,3 +15,5 @@
 .transport .icon-button[data-act="back"] small,.transport .icon-button[data-act="forward"] small{top:50%;left:50%;right:auto;margin:0;font-variant-numeric:tabular-nums}
 .transport .icon-button[data-act="back"] small{transform:translate(calc(-50% - 1px),calc(-50% + 1px))}
 .transport .icon-button[data-act="forward"] small{transform:translate(calc(-50% + 1px),calc(-50% + 1px))}
+
+.book-tags{min-width:0;max-width:100%;font-size:12px;line-height:1.7;color:var(--muted);overflow-wrap:anywhere}
