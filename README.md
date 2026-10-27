@@ -71,7 +71,14 @@ Older Jellyfin versions can use playback-session reports when the direct progres
 
 Folio streams and downloads original files from all providers; it does not transcode. A server’s own clients may support formats that the browser cannot play directly. MP3 and AAC in M4A/M4B are common browser-compatible choices. Other codecs depend on the device and browser. A downloaded file still needs a supported codec. Native audiobook apps can provide OS integrations that a PWA cannot reproduce; Folio does not claim complete feature parity.
 
-The included demo contains four short public-domain literary excerpts narrated with the synthetic Samantha voice, with original SVG covers. These are playable samples, not complete audiobooks. The durations in the demo metadata come from the actual bundled audio files.
+The free shelf contains complete, human-read LibriVox audiobooks, with original SVG covers:
+
+- [Walden](https://librivox.org/walden-by-henry-david-thoreau/), read by Gord Mackenzie (2006).
+- [Moby-Dick](https://librivox.org/moby-dick-by-herman-melville/), read by Stewart Wills (2007).
+- [Pride and Prejudice](https://librivox.org/pride-and-prejudice-by-jane-austen-2/), read by Karen Savage (2007).
+- [The Adventures of Sherlock Holmes](https://librivox.org/the-adventures-of-sherlock-holmes-version-4-by-sir-arthur-conan-doyle/), read by David Clarke (2015).
+
+LibriVox identifies these volunteer recordings as public domain in the USA. Each book’s details show its narrator, original recording, and Internet Archive audio source. Chapter MP3s stream directly from Internet Archive and can be downloaded through Folio for offline listening. Opening the app alone does not download the audio; complete books range from approximately 300 to 680 MiB. Audio hosting availability still depends on Internet Archive. Chapter durations and sizes come from its recording metadata. The previous synthetic sample files and their cached sample downloads are retired on update; personal server libraries and reading data are retained.
 
 ## GitHub Pages
 
@@ -91,8 +98,9 @@ The workflow copies only the public HTML, manifest, service worker, CSS, JavaScr
 | `js/jellyfin.js` | Jellyfin and Emby authentication, libraries, original audio, and progress |
 | `js/player.js` | Playback, sleep timer, audio controls, media session |
 | `js/downloads.js`, `js/background-downloads-sw.js`, `sw.js` | Download queue, browser background transfers, cached shell, offline range responses |
+| `js/demo.js`, `js/sample-audio.js`, `js/sample-migration.js` | Human-read sample library, source credits, and retirement of synthetic samples |
 | `js/db.js` | Local IndexedDB storage |
-| `manifest.webmanifest`, `assets/` | Installation metadata, icons, covers, demo audio |
+| `manifest.webmanifest`, `assets/` | Installation metadata, icons and covers |
 | `tests/` | Focused automated regression checks |
 
 API references: [Plex](https://developer.plex.tv/pms/), [Audiobookshelf](https://api.audiobookshelf.org/), [Jellyfin](https://api.jellyfin.org/), and [Emby authentication](https://dev.emby.media/doc/restapi/User-Authentication.html).
