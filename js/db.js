@@ -41,6 +41,22 @@ async function transact(store, mode, operation) {
 }
 
 export const db = {
+  update: async (store, id, change) => {
+    const database = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction(store, 'readwrite');
+      const objectStore = transaction.objectStore(store);
+      const request = objectStore.get(id);
+      let value;
+      request.onsuccess = () => {
+        value = change(request.result);
+        if (value !== undefined) objectStore.put(value);
+      };
+      transaction.oncomplete = () => resolve(value);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error || new Error('Local storage was interrupted.'));
+    });
+  },
   get: (store, id) => transact(store, 'readonly', objectStore => objectStore.get(id)),
   put: (store, value) => transact(store, 'readwrite', objectStore => objectStore.put(value)),
   delete: (store, id) => transact(store, 'readwrite', objectStore => objectStore.delete(id)),

@@ -90,13 +90,59 @@ function renderShelf() {
   $('#sort').value = sort;
   if (welcome && latest) $('.welcome-cards',content).insertAdjacentHTML('beforeend',`<article class="offline-promo">${I('download')}<h2>Take your next<br>story offline.</h2><p>Save a book before you go. Your place, your chapters, and your audio come with you.</p><button data-view="downloads">Open downloads &nbsp; →</button></article>`);
 }
+const downloadRows = new Map();
+let downloadStorageAt = 0, downloadStorageState = '', downloadStoragePromise;
 async function renderDownloads() {
-  const storage = await downloads.storage();
   if (view !== 'downloads') return;
-  const rows = [...downloadRecords.values()].filter(d => d.title.toLowerCase().includes(query.toLowerCase())).sort((a,b) => b.updatedAt - a.updatedAt);
-  content.innerHTML = heading('Downloads', 'Your books, ready to go offline.') +
-    `<div class="storage-panel"><div><h2>Room for another chapter</h2><p>${bytes(storage.usage)} used${storage.quota ? ` of ${bytes(storage.quota)} available to this site` : ''}. ${storage.persisted ? 'Persistent storage granted.' : 'Your browser manages storage.'}</p><p>Keep Folio open while downloading. Completed tracks are kept when a download pauses.</p></div><button class="button outline" data-act="persist">Protect downloads ${I('arrow')}</button></div>` +
-    (rows.length ? rows.map(d => { const b = books.find(b => b.id === d.id); return `<article class="download-row">${b ? image(b,'row-cover') : I('book')}<div class="row-body"><h3>${e(d.title)}</h3><p>${e(d.status === 'complete' ? 'Ready for offline listening' : d.status === 'downloading' ? 'Downloading… keep Folio open' : d.status === 'queued' ? 'Waiting in queue' : d.status === 'error' ? d.error || 'Download interrupted' : 'Paused · ready to resume')}</p><div class="progress-line"><span style="width:${d.status === 'complete' ? 100 : Math.min(100,d.bytes / (d.totalBytes || 1) * 100)}%"></span></div><p>${bytes(d.bytes)}${d.totalBytes ? ` / ${bytes(d.totalBytes)}` : ''} · ${d.completedTracks || 0}/${d.totalTracks} files</p></div><div class="row-actions">${d.status === 'complete' ? `<button class="button" data-act="play-book" data-id="${e(d.id)}">${I('play')} Play</button>` : ['downloading','queued'].includes(d.status) ? `<button class="button outline" data-act="pause-download" data-id="${e(d.id)}">Pause</button>` : `<button class="button" data-act="download" data-id="${e(d.id)}">Resume</button>`}<button class="icon-button" data-act="remove-download" data-id="${e(d.id)}" aria-label="Remove download of ${e(d.title)}">${I('trash')}</button></div></article>`; }).join('') : empty('Adventure, packed.', 'Open any book and choose Download. Try a narrated sample first, then put your device offline and press play.', 'download', '<button class="button" data-view="library">Explore your library</button>'));
+  if (!$('#download-rows',content)) {
+    content.innerHTML = heading('Downloads', 'Your books, ready to go offline.') +
+      `<div class="storage-panel"><div><h2>Room for another chapter</h2><p id="download-storage">Checking available storage…</p><p id="download-capability"></p></div><button class="button outline" data-act="persist">Protect downloads ${I('arrow')}</button></div><div id="download-rows"></div><div id="download-empty">${empty('Adventure, packed.', 'Open any book and choose Download. Try a narrated sample first, then put your device offline and press play.', 'download', '<button class="button" data-view="library">Explore your library</button>')}</div>`;
+    downloadRows.clear();
+    downloadStorageAt = 0;
+  }
+  $('#download-capability',content).textContent = downloads.backgroundSupported ? 'Downloads can continue after you leave Folio. Your browser may ask for permission.' : 'This browser pauses downloads when Folio is closed or suspended. Keep it open until finished. Completed tracks stay saved.';
+  const list = $('#download-rows',content);
+  const records = [...downloadRecords.values()];
+  for (const [id,row] of downloadRows) if (!downloadRecords.has(id)) { row.remove(); downloadRows.delete(id); }
+  let visible = 0;
+  // Only new rows are positioned; byte updates must not replace covers or move rows.
+  for (const d of records.sort((a,b) => a.updatedAt - b.updatedAt)) {
+    let row = downloadRows.get(d.id);
+    if (!row) {
+      const book = books.find(b => b.id === d.id);
+      row = document.createElement('article');
+      row.className = 'download-row';
+      row.dataset.downloadId = d.id;
+      row.innerHTML = `${book ? image(book,'row-cover') : I('book')}<div class="row-body"><h3></h3><p data-download-status></p><div class="progress-line"><span></span></div><p data-download-size></p></div><div class="row-actions"><button data-download-action data-id="${e(d.id)}"></button><button class="icon-button" data-act="remove-download" data-id="${e(d.id)}" aria-label="Remove download of ${e(d.title)}">${I('trash')}</button></div>`;
+      row.parts = {title: $('h3',row),status: $('[data-download-status]',row),bar: $('.progress-line span',row),size: $('[data-download-size]',row),action: $('[data-download-action]',row)};
+      downloadRows.set(d.id,row);
+      list.prepend(row);
+    }
+    row.hidden = !d.title.toLowerCase().includes(query.toLowerCase());
+    if (!row.hidden) visible++;
+    const {title,status,bar,size,action} = row.parts;
+    title.textContent = d.title;
+    status.textContent = d.status === 'complete' ? 'Ready for offline listening' : d.status === 'downloading' ? d.mode === 'background' ? 'Downloading in the background…' : 'Downloading · keep Folio open' : d.status === 'queued' ? 'Waiting in queue' : d.status === 'error' ? d.error || 'Download interrupted' : 'Paused · ready to resume';
+    bar.style.width = `${d.status === 'complete' ? 100 : Math.min(100,d.bytes / (d.totalBytes || 1) * 100)}%`;
+    size.textContent = `${bytes(d.bytes)}${d.totalBytes ? ` / ${bytes(d.totalBytes)}` : ''} · ${d.completedTracks || 0}/${d.totalTracks} files`;
+    const act = d.status === 'complete' ? 'play-book' : ['downloading','queued'].includes(d.status) ? 'pause-download' : 'download';
+    if (action.dataset.act !== act) {
+      action.dataset.act = act;
+      action.className = `button${act === 'pause-download' ? ' outline' : ''}`;
+      action.innerHTML = act === 'play-book' ? `${I('play')} Play` : act === 'pause-download' ? 'Pause' : 'Resume';
+    }
+  }
+  $('#download-empty',content).hidden = visible > 0;
+  const storageState = records.filter(d => !['queued','downloading'].includes(d.status)).map(d => `${d.id}:${d.status}`).join('|');
+  if (!downloadStoragePromise && (Date.now() - downloadStorageAt > 30000 || storageState !== downloadStorageState)) {
+    downloadStorageAt = Date.now();
+    downloadStorageState = storageState;
+    downloadStoragePromise = downloads.storage().then(storage => {
+      const label = view === 'downloads' && $('#download-storage',content);
+      if (label) label.textContent = `${bytes(storage.usage)} used${storage.quota ? ` of ${bytes(storage.quota)} available to this site` : ''}. ${storage.persisted ? 'Persistent storage granted.' : 'Your browser manages storage.'}`;
+    }).finally(() => { downloadStoragePromise = null; });
+  }
+  return downloadStoragePromise;
 }
 function renderBookmarks() {
   const rows = bookmarks.filter(b => `${b.title} ${b.note}`.toLowerCase().includes(query.toLowerCase())).sort((a,b) => b.createdAt-a.createdAt);
@@ -121,7 +167,7 @@ async function renderHistory() {
     (real.length ? real.sort((a,b) => b.startedAt-a.startedAt).filter(h => `${h.title} ${h.author}`.toLowerCase().includes(query.toLowerCase())).slice(0,100).map(h => `<article class="history-row">${I('headphones')}<div class="row-body"><h3>${e(h.title)}</h3><p>${e(h.author)} · ${new Date(h.startedAt).toLocaleString()}<br>${duration(h.listened)} listened</p></div><button class="button outline" data-act="play-book" data-id="${e(h.bookId)}">Listen again</button></article>`).join('') : empty('Every story starts somewhere.', 'Your listening sessions and time will appear here after you press play.', 'history'));
 }
 function renderSettings() {
-  content.innerHTML = heading('Make yourself <em>at home.</em>', 'A few small things to make your listening feel like yours.') + `<div class="settings-grid"><section class="settings-card"><h2>Your Plex libraries</h2><p>${config.libraries.length ? config.libraries.map(l => `${e(l.title)} · ${e(getServer(l.serverId)?.name || 'Plex')}`).join('<br>') : 'Connect your Plex account and choose a music library with your audiobooks.'}</p><div class="form-row"><button class="button" data-act="connect">${I('plex')} Manage connection</button><button class="button outline" data-act="refresh" ${refreshBusy ? 'disabled' : ''}>${I('refresh')} Refresh</button></div><p id="sync-status">${config.libraries.length ? 'Playback progress syncs to Plex. Bookmarks and lists stay on this device.' : 'The sample shelf works without an account.'}</p>${config.servers.length ? '<button class="text-button" data-act="disconnect">Disconnect Plex from this device</button>' : ''}</section><section class="settings-card"><h2>The way you listen</h2><label class="setting-line">Default playback speed<select data-setting="speed">${[.5,.75,1,1.1,1.25,1.5,1.75,2,2.5,3].map(n => `<option value="${n}" ${settings.speed === n ? 'selected' : ''}>${n}×</option>`).join('')}</select></label><label class="setting-line">Smart rewind after a pause<input type="checkbox" data-setting="smartRewind" ${settings.smartRewind !== false ? 'checked' : ''}></label><label class="setting-line">Smart rewind seconds<input type="number" min="0" max="60" data-setting="rewindSeconds" value="${settings.rewindSeconds || 10}"></label><label class="setting-line">Keep screen awake while listening<input type="checkbox" data-setting="wakeLock" ${settings.wakeLock ? 'checked' : ''}></label><p>Each book remembers its own playback speed and sound settings. Space to pause, ← / → to skip, B to bookmark.</p></section><section class="settings-card"><h2>A little peace of mind</h2><p>Export your progress, reading list, bookmarks, listening history, and preferences. This backup contains no Plex tokens or downloaded audio.</p><div class="form-row"><button class="button secondary" data-act="export">Export backup</button><button class="button outline" data-act="import">Restore backup</button><input type="file" id="backup-file" class="backup-file" accept="application/json,.json"></div><p>Browser storage can be cleared or evicted. Keep a backup of the moments you care about.</p></section><section class="settings-card"><h2>A place of your own</h2><p>Folio connects directly to Plex. Your credentials, library, and notes are stored in this browser. No Folio account, analytics, or third-party servers.</p><div class="form-row"><a class="button secondary" href="./index.html#install">Install Folio ↗</a><button class="button outline" data-act="check-update">Check for updates</button></div><p>Downloads need HTTPS, a supported audio format, and available device storage. Keep the app open until they finish. Folio is independent of Plex and Prologue.</p><button class="text-button" data-act="clear-history">Clear listening history</button></section></div>`;
+  content.innerHTML = heading('Make yourself <em>at home.</em>', 'A few small things to make your listening feel like yours.') + `<div class="settings-grid"><section class="settings-card"><h2>Your Plex libraries</h2><p>${config.libraries.length ? config.libraries.map(l => `${e(l.title)} · ${e(getServer(l.serverId)?.name || 'Plex')}`).join('<br>') : 'Connect your Plex account and choose a music library with your audiobooks.'}</p><div class="form-row"><button class="button" data-act="connect">${I('plex')} Manage connection</button><button class="button outline" data-act="refresh" ${refreshBusy ? 'disabled' : ''}>${I('refresh')} Refresh</button></div><p id="sync-status">${config.libraries.length ? 'Playback progress syncs to Plex. Bookmarks and lists stay on this device.' : 'The sample shelf works without an account.'}</p>${config.servers.length ? '<button class="text-button" data-act="disconnect">Disconnect Plex from this device</button>' : ''}</section><section class="settings-card"><h2>The way you listen</h2><label class="setting-line">Default playback speed<select data-setting="speed">${[.5,.75,1,1.1,1.25,1.5,1.75,2,2.5,3].map(n => `<option value="${n}" ${settings.speed === n ? 'selected' : ''}>${n}×</option>`).join('')}</select></label><label class="setting-line">Smart rewind after a pause<input type="checkbox" data-setting="smartRewind" ${settings.smartRewind !== false ? 'checked' : ''}></label><label class="setting-line">Smart rewind seconds<input type="number" min="0" max="60" data-setting="rewindSeconds" value="${settings.rewindSeconds || 10}"></label><label class="setting-line">Keep screen awake while listening<input type="checkbox" data-setting="wakeLock" ${settings.wakeLock ? 'checked' : ''}></label><p>Each book remembers its own playback speed and sound settings. Space to pause, ← / → to skip, B to bookmark.</p></section><section class="settings-card"><h2>A little peace of mind</h2><p>Export your progress, reading list, bookmarks, listening history, and preferences. This backup contains no Plex tokens or downloaded audio.</p><div class="form-row"><button class="button secondary" data-act="export">Export backup</button><button class="button outline" data-act="import">Restore backup</button><input type="file" id="backup-file" class="backup-file" accept="application/json,.json"></div><p>Browser storage can be cleared or evicted. Keep a backup of the moments you care about.</p></section><section class="settings-card"><h2>A place of your own</h2><p>Folio connects directly to Plex. Your credentials, library, and notes are stored in this browser. No Folio account, analytics, or third-party servers.</p><div class="form-row"><a class="button secondary" href="./index.html#install">Install Folio ↗</a><button class="button outline" data-act="check-update">Check for updates</button></div><p>Downloads need HTTPS, a supported audio format, and available device storage. Background downloads are available in supported browsers. On iPhone and iPad, keep Folio open until downloads finish. Folio is independent of Plex and Prologue.</p><button class="text-button" data-act="clear-history">Clear listening history</button></section></div>`;
 }
 function render() {
   $('#view-label').textContent = group || labels[view];
@@ -414,8 +460,8 @@ async function downloadBook(id) {
   if(!navigator.serviceWorker?.controller) throw new Error('Offline support is still starting. Reload Folio once, then try downloading again.');
   const book=await ensureBook(id);
   await downloads.requestPersistence();
-  await downloads.download(book);
-  toast(`“${book.title}” added to downloads. Keep Folio open until it finishes.`);
+  const record=await downloads.download(book);
+  toast(`“${book.title}” added to downloads. ${record.mode==='background' ? 'Your browser will continue the download in the background.' : 'Keep Folio open until it finishes.'}`);
   if(modal.open) modal.close();
 }
 async function saveSettings() { settings.id='preferences';settings.reading=reading;settings.queue=queue;await db.put('settings',settings);Object.assign(player.settings,settings); }
@@ -513,7 +559,7 @@ document.addEventListener('click',async event=>{
       case 'mark-finished':{const b=await ensureBook(id);const completed=!progress.get(id)?.completed;await stopCurrentBook(id);const p={...(progress.get(id)||{}),id,completed,trackIndex:completed?b.tracks.length-1:0,position:completed?b.tracks.at(-1).duration:0,elapsed:completed?sumDuration(b):0,updatedAt:Date.now(),localChangedAt:Date.now(),source:'local',dirty:!b.demo};await db.put('progress',p);progress.set(id,p);if(!b.demo){await db.delete('sync',id);await db.put('sync',{id:`mark:${id}`,bookId:id,serverId:b.serverId,book:{ratingKey:b.ratingKey},markPlayed:completed,updatedAt:p.updatedAt});await flushSync();}showDetail(id);render();break;}
       case 'filter':filter=value;render();break;
       case 'group':group=value;view='library';filter='all';render();break;
-      case 'persist':toast(await downloads.requestPersistence()?'Persistent storage granted. Your offline shelf is protected from automatic eviction when possible.':'Your browser manages storage. Keep backups and check downloads before a trip.');render();break;
+      case 'persist':toast(await downloads.requestPersistence()?'Persistent storage granted. Your offline shelf is protected from automatic eviction when possible.':'Your browser manages storage. Keep backups and check downloads before a trip.');downloadStorageAt=0;render();break;
       case 'export':await exportBackup();toast('Your backup is ready. Keep it somewhere safe.');break;
       case 'import':$('#backup-file').click();break;
       case 'check-update':await workerRegistration?.update();if(workerRegistration?.waiting)offerUpdate();else toast('Update check finished. Folio will let you know when a new version is ready.');break;

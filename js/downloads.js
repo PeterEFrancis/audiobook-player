@@ -12,17 +12,104 @@ export class DownloadManager extends EventTarget {
     this.getServer = getServer;
     this.plex = plex;
     this.jobs = new Map();
+    this.backgrounds = new Map();
+    this.backgroundAvailable = 'BackgroundFetchManager' in globalThis;
     this.running = false;
+    navigator.serviceWorker?.addEventListener('message', event => {
+      if (event.data?.type !== 'DOWNLOAD_CHANGE') return;
+      const record = event.data.record;
+      if (!record?.backgroundId) this.backgrounds.delete(record?.id);
+      void this._backgroundChange(record);
+    });
+    globalThis.document?.addEventListener('visibilitychange', () => {
+      if (!document.hidden) void this._refreshBackground();
+    });
     this.ready = this._recover();
   }
 
-  async _recover() {
+  get backgroundSupported() { return this.backgroundAvailable; }
+
+  _notify(record) {
+    if (record) this.dispatchEvent(new CustomEvent('change', { detail: { record: { ...record } } }));
+  }
+
+  async _backgroundChange(record) {
+    if (record?.backgroundUnavailable) {
+      this.backgroundBroken = true;
+      this.backgroundAvailable = false;
+      if (record.status === 'error' && globalThis.document && !document.hidden) {
+        const book = await db.get('books', record.id);
+        if (book) {
+          try { await this.download(book); return; } catch {}
+        }
+      }
+    }
+    this._notify(record);
+  }
+
+  async _backgroundManager() {
+    if (this.backgroundBroken) return null;
+    const registration = await navigator.serviceWorker?.getRegistration(ROOT.href).catch(() => null);
+    this.backgroundAvailable = !!registration?.backgroundFetch;
+    if (!registration?.backgroundFetch || !registration.active) return null;
+    // Older installed workers cannot persist Background Fetch completion events.
+    const ready = await new Promise(resolve => {
+      const channel = new MessageChannel();
+      const timeout = setTimeout(() => { channel.port1.close(); resolve(false); }, 1200);
+      channel.port1.onmessage = event => {
+        clearTimeout(timeout); channel.port1.close(); resolve(event.data?.backgroundDownloads === true);
+      };
+      registration.active.postMessage({ type: 'BACKGROUND_FETCH_CAPABILITY' }, [channel.port2]);
+    });
+    return ready ? registration.backgroundFetch : null;
+  }
+
+  async _refreshBackground() {
     for (const record of await db.all('downloads')) {
+      if (record.mode === 'background' && record.backgroundId) {
+        const registration = await navigator.serviceWorker?.getRegistration(ROOT.href).catch(() => null);
+        const active = await registration?.backgroundFetch?.get(record.backgroundId).catch(() => null);
+        if (active) this._watchBackground(record, active);
+      } else if (this.backgrounds.has(record.id) || (record.status === 'error' && record.backgroundUnavailable)) {
+        this.backgrounds.delete(record.id);
+        await this._backgroundChange(record);
+      }
+    }
+  }
+
+  _watchBackground(record, registration) {
+    if (this.backgrounds.get(record.id)?.id === registration.id) return;
+    this.backgrounds.set(record.id, registration);
+    const saved = Object.values(record.trackBytes || {}).reduce((sum, value) => sum + positive(value), 0);
+    let reportedAt = 0;
+    const progress = async () => {
+      if (Date.now() - reportedAt < 600 && !registration.result) return;
+      reportedAt = Date.now();
+      const updated = await db.update('downloads', record.id, current => {
+        if (current?.backgroundId !== registration.id || current.status !== 'downloading') return;
+        return { ...current, bytes: Math.max(current.bytes || 0, saved + registration.downloaded), updatedAt: Date.now() };
+      });
+      this._notify(updated);
+    };
+    registration.addEventListener('progress', () => { void progress().catch(() => {}); });
+    void progress().catch(() => {});
+  }
+
+  async _recover() {
+    const registration = await navigator.serviceWorker?.getRegistration(ROOT.href).catch(() => null);
+    this.backgroundAvailable ||= !!registration?.backgroundFetch;
+    for (const record of await db.all('downloads')) {
+      if (record.backgroundUnavailable) { this.backgroundBroken = true; this.backgroundAvailable = false; }
       if (record.status === 'downloading' || record.status === 'queued') {
+        if (record.backgroundId) {
+          const active = await registration?.backgroundFetch?.get(record.backgroundId).catch(() => null);
+          if (active) { this._watchBackground(record, active); continue; }
+          if (record.backgroundSavingAt && Date.now() - record.backgroundSavingAt < 600000) continue;
+        }
         const bytes = record.trackBytes
           ? Object.values(record.trackBytes).reduce((sum, value) => sum + positive(value), 0)
           : record.bytes;
-        await this._save({ ...record, bytes, status: 'paused', error: null });
+        await this._save({ ...record, bytes, status: 'paused', error: null, backgroundId: null, backgroundFiles: null, backgroundArtwork: null });
       }
     }
   }
@@ -30,7 +117,7 @@ export class DownloadManager extends EventTarget {
   async _save(record) {
     record.updatedAt = Date.now();
     await db.put('downloads', record);
-    this.dispatchEvent(new CustomEvent('change', { detail: { record: { ...record } } }));
+    this._notify(record);
     return record;
   }
 
@@ -73,8 +160,9 @@ export class DownloadManager extends EventTarget {
     if (this.jobs.has(key)) return db.get('downloads', book.id);
     if (!('caches' in globalThis)) throw new Error('Offline downloads require HTTPS or localhost in a supported browser.');
     const previous = await db.get('downloads', book.id);
+    if (previous?.backgroundId && previous.status === 'downloading') return previous;
     let finish;
-    const job = { book, controller: new AbortController(), done: new Promise(resolve => { finish = resolve; }), finish: () => finish() };
+    const job = { book, preparing: true, foregroundOnly: previous?.mode === 'background' && previous.status === 'error', controller: new AbortController(), done: new Promise(resolve => { finish = resolve; }), finish: () => finish() };
     this.jobs.set(key, job);
     const record = {
       ...previous,
@@ -89,16 +177,80 @@ export class DownloadManager extends EventTarget {
       trackIds: book.tracks.map(track => track.id),
       trackBytes: previous?.trackBytes || {},
       error: null,
+      mode: 'foreground', backgroundId: null, backgroundFiles: null, backgroundArtwork: null, backgroundSavingAt: null, backgroundUnavailable: false,
     };
     try {
       await db.put('books', book);
       await this._save(record);
+      job.started = true;
+      if (await this._startBackground(job, record)) {
+        this.jobs.delete(key); job.finish();
+        void this._pump();
+        return await db.get('downloads', book.id);
+      }
+      job.preparing = false;
+      job.started = false;
       void this._pump();
       return record;
     } catch (error) {
       this.jobs.delete(key);
+      const current = await db.get('downloads', book.id);
+      if (current && ['queued', 'downloading'].includes(current.status)) {
+        await this._save({ ...current, status: job.controller.signal.aborted ? 'paused' : 'error', error: job.controller.signal.aborted ? null : error.message, backgroundId: null, backgroundFiles: null, backgroundArtwork: null });
+      }
       job.finish();
       throw error;
+    }
+  }
+
+  async _startBackground(job, record) {
+    if (job.foregroundOnly) return false;
+    const manager = await this._backgroundManager();
+    if (!manager) return false;
+    const { book, controller } = job;
+    const cache = await caches.open(MEDIA_CACHE);
+    const files = [], trackBytes = {};
+    const server = await this.getServer(book.serverId);
+    if (!server) return false;
+    for (const track of book.tracks) {
+      const cacheURL = this.audioURL(book.id, track.id);
+      const saved = await cache.match(cacheURL);
+      if (isComplete(saved)) trackBytes[track.id] = positive(record.trackBytes[track.id]) || positive(saved.headers.get('Content-Length')) || positive(track.size);
+      else files.push({ url: await this.plex.mediaURL(server, track), cacheURL, trackId: track.id, mime: track.mime, title: track.title });
+    }
+    if (!files.length) return false;
+    let artwork;
+    try {
+      if (!(await cache.match(this.artworkURL(book.id)))) {
+        const url = await this.plex.artworkURL(server, book);
+        if (url) artwork = { url, cacheURL: this.artworkURL(book.id) };
+      }
+    } catch {}
+    if (controller.signal.aborted) throw abortError();
+    const backgroundId = `folio:${encodeURIComponent(book.id)}:${crypto.randomUUID()}`;
+    Object.assign(record, {
+      mode: 'background', status: 'downloading', backgroundId, backgroundFiles: files,
+      backgroundArtwork: artwork || null, trackBytes, completedTracks: Object.keys(trackBytes).length,
+      bytes: Object.values(trackBytes).reduce((a, b) => a + b, 0),
+    });
+    await this._save(record);
+    try {
+      const requests = [...files, ...(artwork ? [artwork] : [])].map(file => new Request(file.url, { credentials: 'omit', mode: 'cors', cache: 'no-store' }));
+      const active = await manager.fetch(backgroundId, requests, {
+        title: book.title.slice(0, 80), icons: [{ src: new URL('assets/icon-192.png', ROOT).href, sizes: '192x192', type: 'image/png' }],
+      });
+      if (controller.signal.aborted) {
+        await this._save({ ...record, status: 'paused', backgroundId: null, backgroundFiles: null, backgroundArtwork: null });
+        await active.abort(); throw abortError();
+      }
+      this._watchBackground(record, active);
+      return true;
+    } catch (error) {
+      Object.assign(record, { mode: 'foreground', status: controller.signal.aborted ? 'paused' : 'queued', backgroundId: null, backgroundFiles: null, backgroundArtwork: null });
+      await this._save(record);
+      if (controller.signal.aborted) throw abortError();
+      // Unsupported permissions or server restrictions retain the foreground queue.
+      return false;
     }
   }
 
@@ -107,7 +259,9 @@ export class DownloadManager extends EventTarget {
     this.running = true;
     try {
       while (this.jobs.size) {
-        const [key, job] = this.jobs.entries().next().value;
+        const pending = [...this.jobs.entries()].find(([, job]) => !job.preparing);
+        if (!pending) break;
+        const [key, job] = pending;
         job.started = true;
         try {
           await this._run(job);
@@ -278,7 +432,19 @@ export class DownloadManager extends EventTarget {
       job.finish();
     }
     const record = await db.get('downloads', bookId);
-    if (record && record.status !== 'complete') await this._save({ ...record, status: 'paused', error: null });
+    if (record && record.status !== 'complete') {
+      const backgroundId = record.backgroundId;
+      this._notify(await db.update('downloads', bookId, current => {
+        if (!current || current.status === 'complete') return;
+        return { ...current, status: 'paused', error: null, backgroundId: null, backgroundFiles: null, backgroundArtwork: null, backgroundSavingAt: null, bytes: Object.values(current.trackBytes || {}).reduce((sum, value) => sum + positive(value), 0), updatedAt: Date.now() };
+      }));
+      if (backgroundId) {
+        const registration = await navigator.serviceWorker?.getRegistration(ROOT.href).catch(() => null);
+        const active = await registration?.backgroundFetch?.get(backgroundId).catch(() => null);
+        await active?.abort().catch(() => {});
+        this.backgrounds.delete(bookId);
+      }
+    }
   }
 
   async remove(bookId) {

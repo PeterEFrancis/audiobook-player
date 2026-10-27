@@ -37,7 +37,7 @@ function worker() {
     clients: { matchAll: async () => [], claim: async () => {} },
     skipWaiting: async () => {},
   };
-  vm.runInNewContext(source, { self, caches, URL, Request, Response, Headers, fetch: async () => { throw new TypeError('Offline'); } });
+  vm.runInNewContext(source, { self, caches, URL, Request, Response, Headers, importScripts: () => {}, fetch: async () => { throw new TypeError('Offline'); } });
   return {
     cache: cacheFor,
     async request(path, { range, headers = {}, method = 'GET', mode = 'cors' } = {}) {
@@ -82,8 +82,8 @@ test('out-of-bounds and empty suffix ranges return 416 with the stored size', as
 
 test('offline navigation selects the landing or app shell within a GitHub Pages subpath', async () => {
   const app = worker();
-  await app.cache('folio-shell-v7').put('index.html', new Response('Landing page'));
-  await app.cache('folio-shell-v7').put('app.html', new Response('Audiobook player'));
+  await app.cache('folio-shell-v11').put('index.html', new Response('Landing page'));
+  await app.cache('folio-shell-v11').put('app.html', new Response('Audiobook player'));
   assert.equal(await (await app.request('./', { mode: 'navigate' })).text(), 'Landing page');
   assert.equal(await (await app.request('index.html', { mode: 'navigate' })).text(), 'Landing page');
   assert.equal(await (await app.request('app.html?book=example', { mode: 'navigate' })).text(), 'Audiobook player');

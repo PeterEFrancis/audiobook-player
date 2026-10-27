@@ -1,10 +1,11 @@
-const SHELL_CACHE = 'folio-shell-v7';
+importScripts('js/background-downloads-sw.js');
+const SHELL_CACHE = 'folio-shell-v11';
 const MEDIA_CACHE = 'folio-media-v1';
 const ROOT = new URL(self.registration.scope);
 const SHELL = [
   './', 'index.html', 'app.html', 'css/app.css', 'css/landing.css',
   'js/app.js', 'js/player.js', 'js/plex.js', 'js/db.js', 'js/downloads.js',
-  'js/demo.js', 'js/install.js', 'js/utils.js', 'js/plex-progress.js', 'manifest.webmanifest',
+  'js/demo.js', 'js/install.js', 'js/utils.js', 'js/plex-progress.js', 'js/background-downloads-sw.js', 'manifest.webmanifest',
   'assets/icon.svg', 'assets/icon-192.png', 'assets/icon-512.png', 'assets/icon-maskable.png',
   'assets/cover-walden.svg', 'assets/cover-sea.svg', 'assets/cover-pride.svg', 'assets/cover-sherlock.svg',
 ];
@@ -37,6 +38,7 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('message', event => {
   if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
+  if (event.data?.type === 'BACKGROUND_FETCH_CAPABILITY') event.ports[0]?.postMessage({ backgroundDownloads: true });
 });
 
 async function offlineMedia(request) {

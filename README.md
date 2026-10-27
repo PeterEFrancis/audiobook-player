@@ -24,9 +24,11 @@ The server must be reachable from your device with a valid HTTPS certificate and
 
 ## Offline listening
 
-Download a book while connected to Plex. Downloads run one book at a time and show byte progress. Keep Folio open and the device awake until the book is marked complete: browsers can suspend transfers when an app is closed or backgrounded.
+Download a book while connected to Plex. In browsers that support Background Fetch (including Chrome and Edge), Folio asks the browser to manage the transfer, so it can continue after you switch apps or close Folio. The browser may request permission or show download controls. Folio saves completed audio for offline playback in its service worker.
 
-Pause, resume, and retry preserve **completed tracks**. An interrupted track restarts from its beginning; partial-file byte resume and guaranteed background downloads are not provided. The app verifies nonempty responses and available content lengths before accepting a track. Saved audio supports byte-range playback and seeking; the app shell, book metadata, and covers are retained for offline use.
+Safari and iPhone/iPad PWAs do not support Background Fetch. On those devices, or if background downloads are denied, Folio uses a foreground queue: keep the app open and the device awake until the book is marked complete. The Downloads screen identifies the mode being used. A service worker alone cannot guarantee long transfers while the app is suspended.
+
+Pause, resume, and retry preserve **completed tracks**. An interrupted track restarts from its beginning; partial-file byte resume is not provided. Background transfers remain subject to browser permissions, storage quotas, and operating-system limits. The app verifies nonempty responses and available content lengths before accepting a track. Saved audio supports byte-range playback and seeking; the app shell, book metadata, and covers are retained for offline use.
 
 Check the download's complete status before disconnecting. Storage estimates and a persistence request are available, but the browser and operating system control quotas and may evict saved files. Removing a download frees its cached media. Clearing site data removes local downloads and reading data. For long trips, open the installed app and verify downloaded playback in airplane mode first.
 
@@ -47,7 +49,7 @@ Playback sends per-track position updates and finished/played changes back to Pl
 | Playback speed, configurable skips, smart rewind | Supported |
 | Sleep timer, end-of-chapter sleep, fade-out | Supported |
 | Bookmarks, personal lists, listening history, reading-data backup | Stored on this device |
-| Offline queue, pause/resume, storage management | Supported while the app runs |
+| Offline queue, pause/resume, storage management | Supported; background transfers use Background Fetch where available |
 | Voice boost, bass and treble | Requires browser Web Audio support |
 | Lock-screen and headset controls, background playback | Browser and OS dependent |
 | CarPlay, Apple Watch, Siri shortcuts, native widgets | Not implemented |
@@ -72,7 +74,7 @@ The workflow copies only the public HTML, manifest, service worker, CSS, JavaScr
 | `app.html`, `css/app.css` | Phone-first player with bottom tabs, touch controls, and full-screen playback |
 | `js/plex.js` | Plex sign-in, discovery, metadata, and progress APIs |
 | `js/player.js` | Playback, sleep timer, audio controls, media session |
-| `js/downloads.js`, `sw.js` | Download queue, cached shell, offline range responses |
+| `js/downloads.js`, `js/background-downloads-sw.js`, `sw.js` | Download queue, browser background transfers, cached shell, offline range responses |
 | `js/db.js` | Local IndexedDB storage |
 | `manifest.webmanifest`, `assets/` | Installation metadata, icons, covers, demo audio |
 | `tests/` | Focused automated regression checks |
