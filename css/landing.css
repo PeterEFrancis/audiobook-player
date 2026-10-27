@@ -13,3 +13,27 @@
 @media(max-width:900px){.app-preview{transform:rotate(-5deg) scale(.83)}.offline-note{transform:rotate(2deg) scale(.72);bottom:49px;left:-21px}.art-bottom-caption{bottom:46px}.art-caption{top:23px}.art-orbit-one{width:340px;height:390px}.art-orbit-two{width:320px;height:500px}}
 @media(max-width:680px){.hero-art{height:600px;width:calc(100% + 28px);margin:7px -14px 0;overflow:hidden;max-width:575px}.app-preview{transform:rotate(-5deg) scale(.94)}.art-orbit-one{width:400px;height:460px}.art-orbit-two{width:355px;height:560px}.offline-note{transform:rotate(2deg) scale(.85);left:9px;bottom:24px}.art-bottom-caption{font-size:5px;bottom:28px;right:6px}.art-caption{top:6px;font-size:6px;right:12px}}
 @media(max-width:370px){.hero-art{height:555px}.app-preview{transform:rotate(-5deg) scale(.84)}.offline-note{transform:rotate(2deg) scale(.75);bottom:24px;left:1px}.art-bottom-caption{font-size:4.5px;right:3px;bottom:27px}.art-orbit-one{width:345px;height:410px}.art-orbit-two{width:315px;height:510px}}
+/* A quieter landing page, with the phone as the main illustration. */
+.hero-description{font-size:16px;line-height:1.75;max-width:390px}
+.essentials{display:grid;grid-template-columns:repeat(3,1fr);gap:40px;border-top:1px solid var(--line);padding-top:34px;padding-bottom:54px}
+.essentials h2{font-size:16px;font-weight:600;color:var(--forest);margin-bottom:8px}
+.essentials p{font-size:14px;color:var(--muted);line-height:1.7;max-width:290px}
+.install-layout{align-items:start;padding-block:64px;gap:80px}
+.install-intro h2{margin-top:0;font-size:44px}
+.install-intro>p:not(.install-message){font-size:14px;margin-top:16px}
+.install-message{font-size:12px;line-height:1.6;max-width:340px}
+.install-message:empty{display:none}
+.install-guide{padding-top:0}
+.install-tabs button{font-size:13px}
+.install-panel ol{margin-bottom:0;gap:22px}
+.install-panel li>div>strong{font-size:14px;line-height:1.6}
+.install-panel li p{font-size:13px;max-width:360px;line-height:1.7}
+.faq-section{padding-block:64px;gap:80px}
+.faq-section h2{margin-top:0;font-size:38px}
+.faq-list summary{font-size:14px}
+.faq-list details p{font-size:13px;line-height:1.75}
+.site-footer{min-height:96px;border-top:1px solid var(--line);flex-wrap:nowrap}
+.site-footer>a:last-child{font-size:13px;width:auto;margin-left:auto}
+@media(max-width:900px){.essentials{gap:24px}.install-layout,.faq-section{gap:40px}}
+@media(max-width:680px){.hero{padding-top:18px}.hero-description{font-size:15px}.hero-actions{gap:20px}.hero-art{height:580px}.essentials{grid-template-columns:1fr;gap:22px;padding-top:30px;padding-bottom:40px}.essentials h2{margin-bottom:4px}.essentials p{max-width:none}.install-layout,.faq-section{padding-block:44px}.install-intro h2{font-size:38px}.install-guide{margin-top:30px}.install-tabs{gap:28px}.install-tabs button{font-size:12px}.faq-section>.faq-list{margin-top:24px}.site-footer{min-height:82px}}
+@media(max-width:370px){.hero-art{height:535px}.hero-actions{gap:14px}}

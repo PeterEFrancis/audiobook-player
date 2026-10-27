@@ -32,7 +32,7 @@
   window.addEventListener('beforeinstallprompt', event => {
     event.preventDefault();
     installPrompt = event;
-    message.textContent = 'Ready to install. Give your stories a home.';
+    message.textContent = 'Ready to install.';
   });
   const installed = () => {
     installPrompt = null;
@@ -58,7 +58,7 @@
     const activeTab = tabs.find(tab => tab.getAttribute('aria-selected') === 'true');
     document.getElementById('install').scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     activeTab.focus({ preventScroll: true });
-    message.textContent = ios ? 'In Safari, tap Share → Add to Home Screen.' : 'Follow the steps beside this button, or open the player to get started.';
+    message.textContent = ios ? 'In Safari, tap Share → Add to Home Screen.' : 'Follow the steps for your device.';
   });
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {});
