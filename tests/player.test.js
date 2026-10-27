@@ -43,6 +43,66 @@ test('resume and seek wait for finite media metadata', async t => {
   assert.equal(player.pendingSeek, null);
 });
 
+test('restoring and inspecting a paused book never create outgoing progress', async t => {
+  const { player, writes } = setup(t);
+  db.get = async () => ({ id: 'a', trackIndex: 1, position: 45, updatedAt: 123, dirty: false });
+  await player.open(book('a', 'server'), { autoplay: false });
+  player.audio.loadMetadata(100);
+  player.audio.dispatchEvent(new Event('timeupdate'));
+  player.audio.dispatchEvent(new Event('pause'));
+  await player.persist();
+  await player.open(book('a', 'server'), { autoplay: false });
+  assert.equal(player.index, 1);
+  assert.equal(player.position, 45);
+  assert.deepEqual(writes, []);
+});
+
+test('preferences preserve the playback checkpoint without enqueueing a timeline', async t => {
+  const { player, writes } = setup(t);
+  const saved = { id: 'a', trackIndex: 1, position: 45, elapsed: 145, updatedAt: 123, localChangedAt: 100, source: 'plex', plexFingerprint: 'remote', plexObservedAt: 123, dirty: false };
+  db.get = async () => saved;
+  await player.open(book('a', 'server'), { autoplay: false });
+  player.setSpeed(1.75);
+  await player.saves;
+  assert.deepEqual(writes.map(w => w.store), ['progress']);
+  assert.deepEqual(writes[0].value, {...saved, speed: 1.75, voiceBoost: false, bass: 0, treble: 0});
+  player.context = {resume: async () => {}};
+  player.bass = player.treble = player.gain = {gain: {}};
+  player.compressor = {threshold: {}, ratio: {}};
+  player.configureSound({voiceBoost: true, bass: 3, treble: -2});
+  await player.saves;
+  assert.deepEqual(writes.map(w => w.store), ['progress', 'progress']);
+  assert.deepEqual(writes[1].value, {...saved, speed: 1.75, voiceBoost: true, bass: 3, treble: -2});
+});
+
+test('seeking, playing and pausing enqueue checkpoints, idle timeupdates do not', async t => {
+  const { player, writes } = setup(t);
+  db.get = async () => ({plexFingerprint: 'remote', plexObservedAt: 123});
+  await player.open(book('a', 'server'), { autoplay: false });
+  await player.seek(135);
+  assert.equal(writes.find(w => w.store === 'sync').value.track.id, 'a-1');
+  assert.equal(writes.find(w => w.store === 'progress').value.position, 35);
+  const checkpoint = writes.find(w => w.store === 'progress').value;
+  assert.equal(checkpoint.source, 'local');
+  assert.equal(checkpoint.localChangedAt, checkpoint.updatedAt);
+  assert.equal(checkpoint.plexFingerprint, 'remote');
+  assert.equal(checkpoint.plexObservedAt, 123);
+  writes.length = 0;
+  player.audio.loadMetadata(100);
+  await player.play();
+  assert.equal(writes.find(w => w.store === 'sync').value.state, 'playing');
+  writes.length = 0;
+  player.audio.currentTime = 50;
+  player.audio.pause();
+  await player.saves;
+  assert.equal(writes.find(w => w.store === 'sync').value.state, 'stopped');
+  assert.equal(writes.find(w => w.store === 'progress').value.position, 50);
+  writes.length = 0;
+  player.audio.dispatchEvent(new Event('timeupdate'));
+  await player.persist();
+  assert.deepEqual(writes, []);
+});
+
 test('a failed source lookup keeps the current book usable', async t => {
   const { player } = setup(t);
   await player.open(book('a'), { autoplay: false });
@@ -119,6 +179,7 @@ test('progress writes snapshot their book and count background playback without 
   assert.ok(player.session.listened >= 59);
   player.book = book('b', 'server');
   player.session = { id: 'new-session', listened: 0 };
+  await new Promise(resolve => setImmediate(resolve));
   release();
   await saving;
   const sync = writes.find(entry => entry.store === 'sync').value;

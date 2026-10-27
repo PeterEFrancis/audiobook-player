@@ -4,6 +4,13 @@ const seconds = value => Math.max(0, Number(value) || 0) / 1000;
 const array = value => value == null ? [] : Array.isArray(value) ? value : [value];
 const tags = value => array(value).map(item => item.tag || item.title).filter(Boolean);
 const localHost = host => host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.localhost');
+const progressRows = (items, bookRatingKey = '') => items.map(item => ({
+  ratingKey: String(item.ratingKey),
+  bookRatingKey: String(item.parentRatingKey || String(item.parentKey || '').match(/\/library\/metadata\/([^/?]+)/)?.[1] || bookRatingKey),
+  duration: seconds(item.duration), viewOffset: seconds(item.viewOffset),
+  viewCount: Number(item.viewCount) || 0, lastViewedAt: Number(item.lastViewedAt) || 0,
+  index: Number(item.index) || 0, disc: Number(item.parentIndex) || 1,
+})).sort((a, b) => a.bookRatingKey.localeCompare(b.bookRatingKey, undefined, { numeric: true }) || a.disc - b.disc || a.index - b.index || a.ratingKey.localeCompare(b.ratingKey, undefined, { numeric: true }));
 
 export class PlexError extends Error {
   constructor(message, status = 0) {
@@ -163,14 +170,14 @@ export class PlexClient {
     }));
   }
 
-  async _pages(server, path, params = {}, { signal, onProgress } = {}) {
+  async _pages(server, path, params = {}, { signal, onProgress, timeout } = {}) {
     const items = [];
     const seen = new Set();
     let offset = 0;
     for (;;) {
       const data = await this._request(this._serverURL(server), path, server.token, {
         ...params, 'X-Plex-Container-Start': offset, 'X-Plex-Container-Size': 200,
-      }, { signal });
+      }, { signal, timeout });
       const container = data.MediaContainer || {};
       const page = array(container.Metadata);
       let added = 0;
@@ -201,6 +208,16 @@ export class PlexClient {
       lastViewedAt: Number(item.lastViewedAt) || 0, leafCount: Number(item.leafCount) || 0,
       viewedLeafCount: Number(item.viewedLeafCount) || 0, viewOffset: seconds(item.viewOffset),
     }));
+  }
+
+  async libraryProgress(server, libraryId, options = {}) {
+    const items = await this._pages(server, `/library/sections/${encodeURIComponent(libraryId)}/all`, { type: 10 }, options);
+    return progressRows(items);
+  }
+
+  async bookProgress(server, book, options = {}) {
+    const items = await this._pages(server, `/library/metadata/${encodeURIComponent(book.ratingKey)}/children`, {}, { timeout: 5000, ...options });
+    return progressRows(items, book.ratingKey);
   }
 
   async tracks(server, book) {

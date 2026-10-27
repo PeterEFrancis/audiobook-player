@@ -15,6 +15,9 @@ export class Player extends EventTarget {
     this.sleep = null;
     this.generation = 0;
     this.listening = false;
+    this.progressChanged = false;
+    this.playbackStarted = false;
+    this.saves = Promise.resolve();
     const metadata = () => {
       if (!this.book || this.switching || (this.audio.currentSrc && this.audio.currentSrc !== this.activeSource)) return;
       const t = this.track;
@@ -31,6 +34,8 @@ export class Player extends EventTarget {
     this.audio.addEventListener('playing', () => {
       this.accountListening();
       this.listening = true;
+      this.playbackStarted = true;
+      this.progressChanged = true;
       if (navigator.mediaSession) navigator.mediaSession.playbackState = 'playing';
       this.emit();
     });
@@ -38,6 +43,8 @@ export class Player extends EventTarget {
       if (!this.audio.paused) return;
       this.accountListening();
       this.listening = false;
+      if (this.playbackStarted) this.progressChanged = true;
+      this.playbackStarted = false;
       if (!this.switching) this.pausedAt = Date.now();
       if (navigator.mediaSession) navigator.mediaSession.playbackState = 'paused';
       if (!this.switching) this.persist().catch(e => this.error(e));
@@ -111,6 +118,8 @@ export class Player extends EventTarget {
     this.switching = false;
     this.local = local;
     this.completed = false;
+    this.progressChanged = false;
+    this.playbackStarted = false;
     this.pausedAt = 0;
     if (!respectSleep) this.sleepStopped = false;
     if (!sameBook || !this.session) this.session = {id: crypto.randomUUID(), bookId: book.id, title: book.title, author: book.author, startedAt: Date.now(), listened: 0};
@@ -143,14 +152,19 @@ export class Player extends EventTarget {
   async seek(seconds) {
     if (!this.book) return;
     const target = locatePosition(this.book, seconds);
-    if (target.index !== this.index) await this.open(this.book, {...target, autoplay: this.playing});
+    if (target.index !== this.index) {
+      const autoplay = this.playing;
+      await this.open(this.book, {...target, autoplay});
+      if (autoplay) return;
+    }
     else {
       this.pendingSeek = target.position;
       this.applyPendingSeek();
-      this.completed = false;
-      this.emit();
-      await this.persist();
     }
+    this.completed = false;
+    this.progressChanged = true;
+    this.emit();
+    await this.persist();
   }
   async skip(seconds) { await this.seek(this.elapsed + seconds); }
   async chapter(direction) {
@@ -160,22 +174,41 @@ export class Player extends EventTarget {
     const target = chapters[Math.max(0, Math.min(chapters.length - 1, current + direction))];
     if (target) await this.seek(target.absolute);
   }
-  setSpeed(speed) { this.audio.playbackRate = Math.max(0.5, Math.min(3, Number(speed) || 1)); this.persist().catch(e => this.error(e)); this.emit(); }
+  setSpeed(speed) { this.audio.playbackRate = Math.max(0.5, Math.min(3, Number(speed) || 1)); this.persist({preferencesOnly: true}).catch(e => this.error(e)); this.emit(); }
   setVolume(volume) { this.settings.volume = Math.max(0, Math.min(1, Number(volume) || 0)); this.audio.volume = this.settings.volume; }
-  async persist() {
+  async persist({preferencesOnly = false} = {}) {
     if (!this.book || this.switching) return;
     this.accountListening();
+    const changed = !preferencesOnly && (this.progressChanged || this.listening);
+    // Restoring metadata or inspecting a paused book must not become a local checkpoint.
+    if (!changed && !preferencesOnly) return this.saves;
+    if (changed) this.progressChanged = false;
     const book = this.book;
+    const preferences = {speed: this.speed, voiceBoost: !!this.sound?.voiceBoost, bass: this.sound?.bass || 0, treble: this.sound?.treble || 0};
     const session = this.session ? {...this.session, updatedAt: Date.now()} : null;
-    const progress = {id: this.book.id, trackIndex: this.index, position: this.position, elapsed: this.elapsed, duration: sumDuration(this.book), speed: this.speed, completed: !!this.completed, voiceBoost: !!this.sound?.voiceBoost, bass: this.sound?.bass || 0, treble: this.sound?.treble || 0, updatedAt: Date.now(), dirty: this.book.serverId !== 'demo'};
+    const updatedAt = Date.now();
+    const progress = {id: book.id, trackIndex: this.index, position: this.position, elapsed: this.elapsed, duration: sumDuration(book), ...preferences, completed: !!this.completed, updatedAt, localChangedAt: updatedAt, source: 'local', dirty: book.serverId !== 'demo'};
     const sync = {id: book.id, serverId: book.serverId, track: this.track, position: progress.position, duration: this.track.duration, state: this.playing ? 'playing' : 'stopped', updatedAt: progress.updatedAt};
-    await db.put('progress', progress);
-    if (session) await db.put('history', session);
-    if (book.serverId !== 'demo') {
-      await db.put('sync', sync);
-      this.dispatchEvent(new CustomEvent('syncneeded'));
-    }
-    this.dispatchEvent(new CustomEvent('progress', {detail: progress}));
+    const saving = this.saves.catch(() => {}).then(async () => {
+      const current = await db.get('progress', book.id);
+      if (!changed) {
+        const updated = {...current, id: book.id, ...preferences};
+        await db.put('progress', updated);
+        this.dispatchEvent(new CustomEvent('progress', {detail: updated}));
+        return;
+      }
+      const updated = {...current, ...progress};
+      await db.put('progress', updated);
+      if (session) await db.put('history', session);
+      if (book.serverId !== 'demo') {
+        await db.put('sync', sync);
+        this.dispatchEvent(new CustomEvent('syncneeded'));
+      }
+      this.dispatchEvent(new CustomEvent('progress', {detail: updated}));
+    });
+    this.saves = saving;
+    try { await saving; }
+    catch (error) { if (changed && this.book?.id === book.id) this.progressChanged = true; throw error; }
   }
   tick() {
     const now = Date.now();
@@ -189,6 +222,7 @@ export class Player extends EventTarget {
     this.accountListening();
     this.listening = false;
     if (this.sleepStopped) return;
+    this.progressChanged = true;
     if (this.sleep?.type === 'chapter' && this.elapsed >= this.sleep.end - 0.15) {
       this.sleepStopped = true;
       this.clearSleep(); this.audio.pause(); await this.persist(); this.emit();
@@ -248,7 +282,7 @@ export class Player extends EventTarget {
       this.gain.gain.value = this.sound.voiceBoost ? 1.4 : 1;
       if (activate) this.context.resume().catch(() => {});
     }
-    if (activate) this.persist().catch(e => this.error(e));
+    if (activate) this.persist({preferencesOnly: true}).catch(e => this.error(e));
   }
   updateMetadata() {
     if (!navigator.mediaSession || !window.MediaMetadata) return;

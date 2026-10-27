@@ -1,4 +1,5 @@
 import { PlexClient } from './plex.js';
+import { plexProgress } from './plex-progress.js';
 import { db } from './db.js';
 import { DownloadManager } from './downloads.js';
 import { Player } from './player.js';
@@ -36,6 +37,7 @@ const downloads = new DownloadManager({getServer, plex});
 let books = [], progress = new Map(), downloadRecords = new Map(), bookmarks = [], history = [], settings = {}, reading = [], queue = [];
 let view = location.hash.slice(1) || 'library', query = '', filter = 'all', sort = 'title', group = null, detailBook = null;
 let syncing = false, refreshBusy = false, pinTimer, workerRegistration;
+let refreshPromise, lastPlexPull = 0, incomingSyncStatus = '';
 const labels = {library:'Library',continue:'Continue listening',downloads:'Downloads',reading:'Reading list',bookmarks:'Bookmarks',collections:'Collections & authors',history:'Listening history',settings:'More'};
 if (!labels[view]) view = 'library';
 const workerReady = prepareWorker();
@@ -144,6 +146,7 @@ function render() {
     $('.page-heading h1',content).textContent = 'More';
     $('.page-heading .lead',content).textContent = 'Your listening space.';
     $('.page-heading',content).insertAdjacentHTML('afterend',`<div class="more-menu">${[['bookmarks','bookmark','Bookmarks'],['collections','collection','Collections & authors'],['history','history','Listening history'],['continue','headphones','Continue listening']].map(([route,icon,title]) => `<button class="more-item" data-view="${route}"><span>${I(icon)}</span><strong>${title}</strong><span>›</span></button>`).join('')}</div>`);
+    if (incomingSyncStatus) $('#sync-status').textContent = incomingSyncStatus;
   }
 }
 function navigate(target) { view = labels[target] ? target : 'library'; group = null; filter = 'all'; query = ''; $('#search').value = ''; location.hash = view; document.body.classList.remove('nav-open'); render(); window.scrollTo(0,0); }
@@ -172,46 +175,63 @@ async function stopCurrentBook(id, save = true) {
   try{await saved;}finally{player.switching=false;player.emit();}
 }
 async function fetchBookTracks(book) {
+  const observedAt=Date.now();
   const tracks=await plexAPI.tracks(getServer(book.serverId),book);
   if(!tracks.length)throw new Error('Plex returned no audio files for this book.');
   book.tracks=tracks;
   book.duration=sumDuration(book);
   book.tracksRemoteAt=Math.max(book.lastViewedAt||0,...tracks.map(t=>t.lastViewedAt||0));
   book.tracksStale=false;
+  const rows=new Map();
+  for(const track of tracks) {
+    let row=rows.get(track.ratingKey);
+    if(!row) {row={ratingKey:track.ratingKey,bookRatingKey:book.ratingKey,duration:track.metadataDuration||track.duration,viewOffset:0,viewCount:track.viewCount,lastViewedAt:track.lastViewedAt,index:track.index,disc:track.disc};rows.set(track.ratingKey,row);}
+    if(track.viewOffset>0)row.viewOffset=Math.max(row.viewOffset,(track.partOffset||0)+track.viewOffset);
+  }
+  book.plexTracks=[...rows.values()];
+  book.plexProgressFetchedAt=observedAt;
   await db.put('books',book);
 }
 async function applyRemoteProgress(book) {
-  if(book.demo || book.tracksStale || !book.tracks?.length || player.book?.id===book.id&&player.playing)return;
+  if(book.demo || !book.plexTracks?.length || player.book?.id===book.id&&player.playing)return;
   const local=await db.get('progress',book.id)||progress.get(book.id);
   if(local?.dirty || await db.get('sync',book.id) || await db.get('sync',`mark:${book.id}`))return;
-  const tracks=book.tracks;
-  const remoteTime=Math.max(book.lastViewedAt||0,...tracks.map(t=>t.lastViewedAt||0))*1000;
-  if(local && remoteTime<=local.updatedAt)return;
-  const candidates=tracks.map((track,index)=>({track,index})).filter(({track})=>track.viewOffset>0||track.lastViewedAt>0||track.viewCount>0);
-  if(!candidates.length && !book.viewedLeafCount)return;
-  candidates.sort((a,b)=>(b.track.lastViewedAt||0)-(a.track.lastViewedAt||0)||Number(b.track.viewOffset>0)-Number(a.track.viewOffset>0)||b.index-a.index);
-  const latest=candidates[0];
-  const completed=!(latest?.track.viewOffset>0)&&(tracks.every(t=>t.viewCount>0)||book.leafCount>0&&book.viewedLeafCount>=book.leafCount);
-  const trackIndex=completed?tracks.length-1:latest?.track.viewOffset>0?latest.index:Math.min((latest?.index??-1)+1,tracks.length-1);
-  const position=completed?tracks[trackIndex].duration:latest?.track.viewOffset>0?Math.min(latest.track.viewOffset,latest.track.duration||Infinity):0;
-  const p={...local,id:book.id,trackIndex,position,elapsed:tracks.slice(0,trackIndex).reduce((s,t)=>s+t.duration,0)+position,completed,updatedAt:remoteTime||Date.now(),dirty:false};
+  // A cached server snapshot must not rewind a checkpoint just uploaded here.
+  if((book.plexProgressFetchedAt||0)<=(local?.localChangedAt||0))return;
+  const remote=plexProgress(book,book.plexTracks);
+  if(local?.plexFingerprint===remote.plexFingerprint && local.trackIndex===remote.trackIndex && Math.abs(local.position-remote.position)<0.01 && local.completed===remote.completed && local.duration===remote.duration)return;
+  const p={...local,...remote,plexObservedAt:book.plexProgressFetchedAt};
   if(player.book?.id===book.id&&player.playing || progress.get(book.id)?.dirty)return;
+  const wasCurrent=player.book?.id===book.id;
   await stopCurrentBook(book.id,false);
+  const generation=player.generation;
   progress.set(book.id,p);
   await db.put('progress',p);
+  if(wasCurrent && player.generation===generation && !player.book) {
+    if(book.tracks?.length&&!p.completed)await player.open(book,{index:p.trackIndex,position:p.position,autoplay:false});
+    else if(modal.classList.contains('player-modal'))modal.close();
+  }
 }
-async function ensureBook(id) {
+async function ensureBook(id,{refreshProgress=false}={}) {
   const book = books.find(b => b.id === id) || await db.get('books',id);
   if (!book) throw new Error('This book is no longer in the library. Refresh Plex to load it again.');
   if(!book.demo && (!book.tracks?.length || book.tracksStale&&navigator.onLine)) {
     if(!navigator.onLine)throw new Error('Connect to Plex and download this book before listening offline.');
     try{await fetchBookTracks(book);}catch(error){if(!book.tracks?.length)throw error;}
   }
+  if(refreshProgress && !book.demo && navigator.onLine && getServer(book.serverId)?.url && !(player.book?.id===book.id&&player.playing) && Date.now()-(book.plexProgressFetchedAt||0)>10000) {
+    try {
+      const observedAt=Date.now();
+      book.plexTracks=await plexAPI.bookProgress(getServer(book.serverId),book);
+      book.plexProgressFetchedAt=observedAt;
+      await db.put('books',book);
+    } catch { /* Downloaded books remain usable when the server is unreachable. */ }
+  }
   await applyRemoteProgress(book);
   return book;
 }
 async function playBook(id, options) {
-  const book = await ensureBook(id);
+  const book = await ensureBook(id,{refreshProgress:true});
   if (await downloads.hasTrack(book.id,book.tracks[options?.index || 0].id)) await workerReady;
   await player.open(book,options); updatePlayer(); if (modal.open && !modal.classList.contains('player-modal')) modal.close();
 }
@@ -309,45 +329,69 @@ async function selectServer(server,validate=true) {
 }
 async function loadLibrary(library,showProgress=false) {
   const server=getServer(library.serverId);
-  const incoming=await plexAPI.books(server,library.id,{onProgress:({loaded,total})=>{if(showProgress)connectionStatus(`<p>Making room on your shelf… ${loaded}${total?` / ${total}`:''} books loaded.</p>`);}});
+  const observedAt=Date.now();
+  const [incoming,remoteRows]=await Promise.all([
+    plexAPI.books(server,library.id,{onProgress:({loaded,total})=>{if(showProgress)connectionStatus(`<p>Making room on your shelf… ${loaded}${total?` / ${total}`:''} books loaded.</p>`);}}),
+    plexAPI.libraryProgress(server,library.id)
+  ]);
+  const byBook=new Map();
+  for(const row of remoteRows) {
+    if(!byBook.has(row.bookRatingKey))byBook.set(row.bookRatingKey,[]);
+    byBook.get(row.bookRatingKey).push(row);
+  }
   const oldMap=new Map(books.map(b=>[b.id,b]));
   for(const b of incoming) {
     const old=oldMap.get(b.id);
     if(old?.tracks?.length) {
       b.tracks=old.tracks;
       b.duration=sumDuration(b);
-      b.tracksRemoteAt=old.tracksRemoteAt??old.lastViewedAt??0;
-      const remoteNewer=(b.lastViewedAt||0)>b.tracksRemoteAt&&!progress.get(b.id)?.dirty;
-      b.tracksStale=!!old.tracksStale||old.updatedAt!==b.updatedAt||remoteNewer;
-      if(remoteNewer) {
-        try{await fetchBookTracks(b);await applyRemoteProgress(b);}catch{ /* Keep cached tracks usable if Plex becomes unavailable. */ }
-      }
+      b.tracksStale=!!old.tracksStale||old.updatedAt!==b.updatedAt;
     }
+    b.plexTracks=byBook.get(b.ratingKey)||[];
+    b.plexProgressFetchedAt=observedAt;
+    if(!b.tracks?.length)b.duration=b.plexTracks.reduce((sum,row)=>sum+row.duration,0)||b.duration;
     await db.put('books',b);
+    await applyRemoteProgress(b);
   }
   books=(await db.all('books')).filter(b=>!b.demo);
   if(!books.length) books=demoBooks.map(b=>structuredClone(b));
 }
-async function refresh() {
-  if(refreshBusy) return;
-  if(!config.libraries.length) return showConnect();
-  refreshBusy=true; toast('Refreshing your Plex shelf…');
-  try {
+function refresh({quiet=false,force=true}={}) {
+  if(refreshPromise)return refreshPromise;
+  if(!config.libraries.length)return quiet?Promise.resolve():showConnect();
+  if(quiet&&!force&&Date.now()-lastPlexPull<30000)return Promise.resolve();
+  refreshBusy=true;
+  incomingSyncStatus='Reading played status and progress from Plex…';
+  if(view==='settings'&&$('#sync-status'))$('#sync-status').textContent=incomingSyncStatus;
+  if(!quiet)toast('Refreshing your Plex shelf and progress…');
+  refreshPromise=(async()=>{
+    // Pending offline checkpoints are sent before reading the server snapshot.
     await flushSync();
-    for(const server of config.servers) { const connected=await plexAPI.connect(server); Object.assign(server,connected); }
-    saveConfig();
-    for(const library of config.libraries) await loadLibrary(library);
-    toast('Your library is up to date.');render();
-  } finally {refreshBusy=false;}
+    if(force) {
+      for(const server of config.servers)Object.assign(server,await plexAPI.connect(server));
+      saveConfig();
+    }
+    for(const library of config.libraries)await loadLibrary(library);
+    lastPlexPull=Date.now();
+    incomingSyncStatus=`Plex progress updated ${new Date(lastPlexPull).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}. Playback changes also sync back to Plex.`;
+    if(!quiet)toast('Your library and Plex progress are up to date.');
+  })().catch(error=>{
+    incomingSyncStatus=`Plex progress could not refresh. Saved progress is still available. ${error.message}`;
+    if(!quiet)throw error;
+  }).finally(()=>{refreshBusy=false;refreshPromise=null;render();});
+  return refreshPromise;
 }
 async function flushSync() {
   if(syncing || !navigator.onLine) return;
   syncing=true;
   try {
-    for(const item of await db.all('sync')) {
+    const pending=(await db.all('sync')).sort((a,b)=>a.updatedAt-b.updatedAt || Number(b.markPlayed!=null)-Number(a.markPlayed!=null));
+    const failedBooks=new Set();
+    for(const item of pending) {
+      const bookId=item.bookId||item.id;
+      if(failedBooks.has(bookId))continue;
       const server=getServer(item.serverId); if(!server) continue;
       try {
-        const bookId=item.bookId||item.id;
         if(item.markPlayed != null) await plexAPI.markPlayed(server,item.book,item.markPlayed);
         else {
           await plexAPI.timeline(server,item.track,item);
@@ -361,7 +405,7 @@ async function flushSync() {
           const p=await db.get('progress',bookId);
           if(p && p.updatedAt<=item.updatedAt && !await db.get('sync',bookId) && !await db.get('sync',`mark:${bookId}`)) {p.dirty=false;await db.put('progress',p);progress.set(p.id,p);}
         }
-      } catch { /* Keep the latest checkpoint until Plex is reachable again. */ }
+      } catch {failedBooks.add(bookId); /* Preserve this book's remaining operation order on retry. */}
     }
   } finally {syncing=false;}
 }
@@ -422,7 +466,7 @@ async function prepareWorker() {
   } catch(error) {toast('Offline setup could not finish. Use HTTPS or localhost, then reload to try again.',true);}
 }
 function offerUpdate() {toast('A fresh version of Folio is ready.',false,{label:'Update',run:async()=>{await player.persist();workerRegistration?.waiting?.postMessage({type:'SKIP_WAITING'});navigator.serviceWorker.addEventListener('controllerchange',()=>location.reload(),{once:true});}});}
-function networkState() {$('#network-label').innerHTML=`<span class="status-dot" style="background:${navigator.onLine?'#789360':'#b28f5d'}"></span>${navigator.onLine?'Online':'Offline'}`;if(navigator.onLine)flushSync();}
+function networkState() {$('#network-label').innerHTML=`<span class="status-dot" style="background:${navigator.onLine?'#789360':'#b28f5d'}"></span>${navigator.onLine?'Online':'Offline'}`;if(navigator.onLine)refresh({quiet:true,force:true});}
 
 document.addEventListener('click',async event=>{
   const target=event.target.closest('[data-act],[data-view]'); if(!target)return;
@@ -466,7 +510,7 @@ document.addEventListener('click',async event=>{
       case 'queue-view':showQueue();break;
       case 'queue-up':{const n=Number(index);if(n>0)[queue[n-1],queue[n]]=[queue[n],queue[n-1]];await saveSettings();showQueue();break;}
       case 'queue-remove':queue.splice(Number(index),1);await saveSettings();showQueue();break;
-      case 'mark-finished':{const b=await ensureBook(id);const completed=!progress.get(id)?.completed;await stopCurrentBook(id);const p={...(progress.get(id)||{}),id,completed,trackIndex:completed?b.tracks.length-1:0,position:completed?b.tracks.at(-1).duration:0,elapsed:completed?sumDuration(b):0,updatedAt:Date.now(),dirty:!b.demo};await db.put('progress',p);progress.set(id,p);if(!b.demo){await db.delete('sync',id);await db.put('sync',{id:`mark:${id}`,bookId:id,serverId:b.serverId,book:{ratingKey:b.ratingKey},markPlayed:completed,updatedAt:p.updatedAt});await flushSync();}showDetail(id);render();break;}
+      case 'mark-finished':{const b=await ensureBook(id);const completed=!progress.get(id)?.completed;await stopCurrentBook(id);const p={...(progress.get(id)||{}),id,completed,trackIndex:completed?b.tracks.length-1:0,position:completed?b.tracks.at(-1).duration:0,elapsed:completed?sumDuration(b):0,updatedAt:Date.now(),localChangedAt:Date.now(),source:'local',dirty:!b.demo};await db.put('progress',p);progress.set(id,p);if(!b.demo){await db.delete('sync',id);await db.put('sync',{id:`mark:${id}`,bookId:id,serverId:b.serverId,book:{ratingKey:b.ratingKey},markPlayed:completed,updatedAt:p.updatedAt});await flushSync();}showDetail(id);render();break;}
       case 'filter':filter=value;render();break;
       case 'group':group=value;view='library';filter='all';render();break;
       case 'persist':toast(await downloads.requestPersistence()?'Persistent storage granted. Your offline shelf is protected from automatic eviction when possible.':'Your browser manages storage. Keep backups and check downloads before a trip.');render();break;
@@ -538,8 +582,9 @@ downloads.addEventListener('change',event=>{
 });
 window.addEventListener('online',networkState);window.addEventListener('offline',networkState);
 window.addEventListener('hashchange',()=>{const target=location.hash.slice(1);if(labels[target]&&target!==view){view=target;group=null;render();}});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){updateWakeLock();flushSync();}});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){updateWakeLock();refresh({quiet:true,force:false});}});
 setInterval(flushSync,15000);
+setInterval(()=>{if(navigator.onLine&&!document.hidden)refresh({quiet:true,force:false});},60000);
 async function reloadState() {
   const [savedBooks,savedProgress,savedBookmarks,savedHistory,savedSettings,savedDownloads]=await Promise.all([db.all('books'),db.all('progress'),db.all('bookmarks'),db.all('history'),db.get('settings','preferences'),downloads.list()]);
   const realBooks=savedBooks.filter(b=>!b.demo);
@@ -553,7 +598,7 @@ async function boot() {
   try {
     await downloads.ready;await reloadState();render();networkState();
     const pin=JSON.parse(sessionStorage.getItem('folio.pin')||'null');if(pin){showConnect();pollPin(pin.id,pin.startedAt);}
-    const latest=books.filter(b=>progress.has(b.id)&&!progress.get(b.id).completed).sort((a,b)=>progress.get(b.id).updatedAt-progress.get(a.id).updatedAt)[0];
+    const latest=books.filter(b=>progress.get(b.id)?.elapsed>0&&!progress.get(b.id).completed).sort((a,b)=>progress.get(b.id).updatedAt-progress.get(a.id).updatedAt)[0];
     if(latest?.tracks?.length){await workerReady;await player.open(latest,{autoplay:false});updatePlayer();}
   }catch(error){content.innerHTML=empty('Your shelf couldn’t open.',`${e(error.message)} Enable browser storage and reload Folio.`,'book');}
 }
