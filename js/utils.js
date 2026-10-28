@@ -25,3 +25,10 @@ export function chaptersFor(book) {
     return result;
   });
 }
+
+export function playbackChapter(book, index, position) {
+  const at = Math.max(0, Number(position) || 0);
+  const chapters = chaptersFor(book).filter(chapter => chapter.index === index);
+  const chapter = chapters.findLast(chapter => chapter.position <= at) || chapters[0];
+  return chapter ? {...chapter, elapsed: Math.max(0, Math.min(chapter.duration, at - chapter.position))} : {title: '', absolute: 0, duration: 0, elapsed: 0};
+}

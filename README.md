@@ -67,7 +67,7 @@ Older Jellyfin versions can use playback-session reports when the direct progres
 | Plex, Audiobookshelf, Jellyfin, and Emby libraries | Supported |
 | LibriVox catalog search, streaming, and offline downloads | Search by title or author and add selected books |
 | Search, sorting, authors, collections | Supported where supplied by the server |
-| Continuous playback, track and embedded chapters, whole-book seeking | Supported |
+| Continuous playback, track and embedded chapters, chapter playback sliders | Supported |
 | Playback speed, configurable skips, smart rewind | Supported |
 | Sleep timer, end-of-chapter sleep, fade-out | Supported |
 | Bookmarks, personal lists, listening history, reading-data backup | Stored on this device |

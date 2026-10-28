@@ -7,7 +7,7 @@ import { librivoxServer, librivoxLibrary } from './librivox.js';
 import { retireAutomaticCatalog } from './librivox-catalog.js';
 import { removeLegacySamples } from './sample-migration.js';
 import { bindBookSheet } from './book-sheet.js';
-import { escapeHTML as e, clock, duration, bytes, sumDuration, chaptersFor } from './utils.js';
+import { escapeHTML as e, clock, duration, bytes, sumDuration, chaptersFor, playbackChapter } from './utils.js';
 
 const paths = {
   library:'M4 4h4v16H4zM10 4h4v16h-4zM16 5l4-1 3 15-4 1z', headphones:'M4 14v-3a8 8 0 0116 0v3M4 12H2v7h5v-7H4m16 0h2v7h-5v-7h3',
@@ -365,30 +365,40 @@ async function showDetail(id, tab = 'chapters') {
 function showNowPlaying() {
   if (!player.book) { toast('Choose a book to start listening.'); return; }
   const b = player.book;
-  showModal('Now playing', `${image(b,'now-cover')}<div class="now-text"><p class="eyebrow">A LITTLE MORE LOST IN THE STORY</p><h3>${e(b.title)}</h3><p>${e(b.author)}</p><small id="now-chapter"></small></div><div class="now-controls"><div class="scrubber"><span id="now-time">0:00</span><input type="range" id="now-seek" min="0" max="${sumDuration(b)}" value="${player.elapsed}" step=".1" aria-label="Book playback position"><span id="now-duration">${clock(sumDuration(b))}</span></div><div class="transport"><button class="icon-button" data-act="prev-chapter" aria-label="Previous chapter">${I('previous')}</button><button class="icon-button" data-act="back" aria-label="Rewind 15 seconds">${I('back')}<small>15</small></button><button class="play-button" data-act="toggle" id="now-play" aria-label="Play">${I('play')}</button><button class="icon-button" data-act="forward" aria-label="Forward 30 seconds">${I('forward')}<small>30</small></button><button class="icon-button" data-act="next-chapter" aria-label="Next chapter">${I('next')}</button></div><div class="now-tools"><button data-act="speed">${I('volume')}<span id="now-speed">${player.speed}× speed</span></button><button data-act="sleep">${I('moon')}<span id="now-sleep">Sleep timer</span></button><button data-act="add-bookmark">${I('bookmark')}Bookmark</button><button data-act="queue-view">${I('queue')}Up next</button></div><div class="now-tools"><button data-act="detail" data-id="${e(b.id)}">Chapters & notes ↗</button><small id="now-offline" class="text-button"></small></div></div>`, 'player-modal');
+  const chapter = playbackChapter(b,player.index,player.position);
+  showModal('Now playing', `${image(b,'now-cover')}<div class="now-text"><p class="eyebrow">A LITTLE MORE LOST IN THE STORY</p><h3>${e(b.title)}</h3><p>${e(b.author)}</p><small id="now-chapter"></small></div><div class="now-controls"><div class="scrubber"><span id="now-time">0:00</span><input type="range" id="now-seek" min="0" max="${chapter.duration}" value="${chapter.elapsed}" step=".1" aria-label="Chapter playback position"><span id="now-duration">${clock(chapter.duration)}</span></div><div class="transport"><button class="icon-button" data-act="prev-chapter" aria-label="Previous chapter">${I('previous')}</button><button class="icon-button" data-act="back" aria-label="Rewind 15 seconds">${I('back')}<small>15</small></button><button class="play-button" data-act="toggle" id="now-play" aria-label="Play">${I('play')}</button><button class="icon-button" data-act="forward" aria-label="Forward 30 seconds">${I('forward')}<small>30</small></button><button class="icon-button" data-act="next-chapter" aria-label="Next chapter">${I('next')}</button></div><div class="now-tools"><button data-act="speed">${I('volume')}<span id="now-speed">${player.speed}× speed</span></button><button data-act="sleep">${I('moon')}<span id="now-sleep">Sleep timer</span></button><button data-act="add-bookmark">${I('bookmark')}Bookmark</button><button data-act="queue-view">${I('queue')}Up next</button></div><div class="now-tools"><button data-act="detail" data-id="${e(b.id)}">Chapters & notes ↗</button><small id="now-offline" class="text-button"></small></div></div>`, 'player-modal');
   updatePlayer();
 }
 function updatePlayer() {
   if (!player.book) return;
   const b = player.book;
+  const chapter = playbackChapter(b,player.index,player.pendingSeek ?? player.position);
   $('#mini-player').hidden = false;
   $('#mini-title').textContent = b.title; $('#mini-author').textContent = b.author;
   if ($('#mini-cover').dataset.book !== b.id) { $('#mini-cover').src = cover(b); $('#mini-cover').dataset.book = b.id; }
   for (const prefix of ['mini','now']) {
     const time = $(`#${prefix}-time`), seek = $(`#${prefix}-seek`), play = $(`#${prefix}-play`), total = $(`#${prefix}-duration`);
-    if (time) time.textContent = clock(player.elapsed);
-    if (total) total.textContent = clock(sumDuration(b));
-    if (seek) { seek.max = sumDuration(b); if (!activeSeeks.has(seek)) seek.value = player.elapsed; }
+    if (seek && !activeSeeks.has(seek)) {
+      seek.max = chapter.duration; seek.value = chapter.elapsed;
+      seek.dataset.chapterStart = chapter.absolute; seek.dataset.bookId = b.id;
+    }
+    if (time) time.textContent = clock(seek && activeSeeks.has(seek) ? Number(seek.value) : chapter.elapsed);
+    if (total) total.textContent = clock(seek && activeSeeks.has(seek) ? Number(seek.max) : chapter.duration);
     if (play) { play.innerHTML = I(player.playing ? 'pause' : 'play'); play.setAttribute('aria-label',player.playing ? 'Pause' : 'Play'); }
   }
   $('#mini-speed').textContent = `${player.speed}×`;
   if ($('#now-chapter')) {
-    const chapter = chaptersFor(b).findLast(c => c.absolute <= player.elapsed+.1);
-    $('#now-chapter').textContent = chapter?.title || player.track.title;
+    $('#now-chapter').textContent = chapter.title || player.track.title;
     $('#now-speed').textContent = `${player.speed}× speed`;
     $('#now-sleep').textContent = player.sleep ? player.sleep.type === 'chapter' ? 'End of chapter' : `${Math.max(0,Math.ceil((player.sleep.end-Date.now())/60000))} min left` : 'Sleep timer';
     $('#now-offline').textContent = player.local ? '↓ Playing offline file' : `Streaming from ${providerName(getServer(b.serverId))}`;
   }
+}
+async function seekChapter(el, seconds) {
+  if (!player.book || el.dataset.bookId !== player.book.id) return;
+  // The displayed range retains its chapter origin while the user is dragging.
+  const offset = Math.max(0, Math.min(Number(seconds) || 0, Math.max(0, Number(el.max) - 0.05)));
+  await player.seek(Number(el.dataset.chapterStart) + offset);
 }
 function showSpeed() {
   if (!player.book) return toast('Start a book to adjust its playback.');
@@ -753,7 +763,7 @@ document.addEventListener('change',async event=>{
     if(isPlaybackSeek(el)) {
       const target=pendingSeeks.get(el) ?? Number(el.value);
       pendingSeeks.delete(el);activeSeeks.delete(el);
-      try{await player.seek(target);}finally{updatePlayer();}
+      try{await seekChapter(el,target);}finally{updatePlayer();}
     }
     if(el.dataset.setting){settings[el.dataset.setting]=el.type==='checkbox'?el.checked:Number(el.value);await saveSettings();await updateWakeLock();if(el.dataset.setting==='includeLibrivox'){shelfLimit=60;if(!el.checked){catalogAbort?.abort();if($('#librivox-search'))modal.close();}render();}}
     if(['voice-boost','sound-bass','sound-treble'].includes(el.id))player.configureSound({voiceBoost:$('#voice-boost').checked,bass:$('#sound-bass').value,treble:$('#sound-treble').value});
