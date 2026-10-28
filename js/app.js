@@ -7,6 +7,7 @@ import { librivoxServer, librivoxLibrary } from './librivox.js';
 import { retireAutomaticCatalog } from './librivox-catalog.js';
 import { removeLegacySamples } from './sample-migration.js';
 import { bindBookSheet } from './book-sheet.js';
+import { bindPortraitMode } from './portrait.js';
 import { escapeHTML as e, clock, duration, bytes, sumDuration, chaptersFor, playbackChapter } from './utils.js';
 
 const paths = {
@@ -28,6 +29,7 @@ function I(name) {
 const $ = (selector, root = document) => root.querySelector(selector);
 const content = $('#content');
 const modal = $('#modal');
+const enforcePortrait = bindPortraitMode($('#portrait-guard'));
 const resetBookSheet = bindBookSheet(modal);
 let modalVersion = 0;
 const activeSeeks = new Set(), pendingSeeks = new WeakMap();
@@ -227,6 +229,7 @@ function showModal(title, html, className = '') {
   modal.setAttribute('aria-label',title || 'Book details');
   $('#modal-content').innerHTML = `<div class="modal-content">${className === 'book-modal' ? '<button type="button" class="modal-handle" data-act="close" aria-label="Close book details"></button>' : ''}<div class="modal-header">${title ? `<h2>${title}</h2>` : ''}<button class="icon-button" data-act="close" aria-label="Close dialog">${I('close')}</button></div>${html}</div>`;
   if (!modal.open) modal.showModal();
+  enforcePortrait();
 }
 function showLibriVoxSearch() {
   if(settings.includeLibrivox === false)return;
