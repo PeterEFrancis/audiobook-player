@@ -45,7 +45,7 @@ const downloads = new DownloadManager({getServer, plex});
 let books = [], progress = new Map(), downloadRecords = new Map(), bookmarks = [], history = [], settings = {}, reading = [], queue = [];
 let view = location.hash.slice(1) || 'library', query = '', filter = 'all', sort = 'title', group = null, detailBook = null;
 let syncing = false, refreshBusy = false, pinTimer, workerRegistration;
-let refreshPromise, lastPlexPull = 0, incomingSyncStatus = '';
+let refreshPromise, lastPlexPull = 0, incomingSyncStatus = '', refreshingServerId = null;
 let outgoingSyncError = '', shelfLimit = 60;
 let catalogQuery = '', catalogField = 'title', catalogResults = [], catalogOffset = 0, catalogHasMore = false, catalogSearching = false, catalogError = '', catalogSearched = false, catalogAbort, catalogVersion = 0;
 const labels = {library:'Library',continue:'Continue listening',downloads:'Downloads',reading:'Reading list',bookmarks:'Bookmarks',collections:'Collections & authors',history:'Listening history',settings:'Settings'};
@@ -70,7 +70,7 @@ document.addEventListener('error', event => { const img = event.target; if (img.
 function heading(title, subtitle, action = '') { return `<div class="page-heading"><div><p class="eyebrow">THE ART OF LISTENING</p><h1>${title}</h1><p class="lead">${subtitle}</p></div>${action}</div>`; }
 function empty(title, text, icon = 'book', action = '') { return `<div class="empty-state">${I(icon)}<h2>${title}</h2><p>${text}</p>${action}</div>`; }
 function ratio(book) { const p = progress.get(book.id); return p?.completed ? 100 : Math.min(100, (p?.elapsed || 0) / (sumDuration(book) || 1) * 100); }
-function libraryBooks() { return books.filter(book => !book.librivox || book.inLibrary); }
+function libraryBooks() { return books.filter(book => book.librivox ? book.inLibrary : downloadRecords.get(book.id)?.status==='complete' || config.libraries.some(library=>library.serverId===book.serverId&&(!book.libraryId||String(library.id)===String(book.libraryId)))); }
 function activeLibraries() { return [...config.libraries,...(libraryBooks().some(book=>book.librivox) ? [librivoxLibrary] : [])]; }
 function visibleBooks() {
   return libraryBooks().filter(book => {
@@ -179,8 +179,18 @@ async function renderHistory() {
   content.innerHTML = heading('Listening history', 'Your listening time on this device.') + `<div class="stat-grid"><div class="stat"><strong>${duration(real.reduce((s,h) => s+h.listened,0))}</strong><span>LISTENED</span></div><div class="stat"><strong>${books.filter(b => progress.get(b.id)?.completed).length}</strong><span>FINISHED</span></div><div class="stat"><strong>${streak}</strong><span>DAY STREAK</span></div></div>` +
     (real.length ? real.sort((a,b) => b.startedAt-a.startedAt).filter(h => `${h.title} ${h.author}`.toLowerCase().includes(query.toLowerCase())).slice(0,100).map(h => `<article class="history-row">${I('headphones')}<div class="row-body"><h3>${e(h.title)}</h3><p>${e(h.author)} · ${new Date(h.startedAt).toLocaleString()}<br>${duration(h.listened)} listened</p></div><button class="button outline" data-act="play-book" data-id="${e(h.bookId)}">Listen again</button></article>`).join('') : empty('Every story starts somewhere.', 'Your listening sessions and time will appear here after you press play.', 'history'));
 }
+function serverLabel(server) { return server.displayName || server.name || providerName(server); }
+function serverAddress(server) {
+  try { const url=new URL(server.url);return url.origin+url.pathname.replace(/\/$/,''); } catch { return ''; }
+}
+function serverSettingsCard() {
+  return `<section class="settings-card servers-settings"><h2>Your server libraries</h2><button class="button" data-act="connect">${I('cloud')} Add server</button><ul class="server-list">${config.servers.map(server=>{
+    const libraries=config.libraries.filter(library=>library.serverId===server.id);
+    return `<li><div class="server-title"><h3>${e(serverLabel(server))}</h3><span>${e(providerName(server))}</span></div><p class="server-address">${e(serverAddress(server))}</p><p>${libraries.length ? libraries.map(library=>e(library.title)).join(', ') : 'No libraries selected'}</p><div class="server-actions"><button class="button secondary" data-act="manage-server" data-id="${e(server.id)}" aria-label="Manage ${e(serverLabel(server))}">Manage</button><button class="button outline" data-act="refresh-server" data-id="${e(server.id)}" ${refreshBusy?'disabled':''} aria-label="Refresh ${e(serverLabel(server))}">${refreshBusy&&(!refreshingServerId||refreshingServerId===server.id)?'Refreshing…':'Refresh'}</button><button class="text-button server-remove" data-act="remove-server" data-id="${e(server.id)}" aria-label="Remove ${e(serverLabel(server))}">Remove</button></div></li>`;
+  }).join('')}</ul><label class="setting-line">Enable LibriVox catalog search<input type="checkbox" role="switch" data-setting="includeLibrivox" ${settings.includeLibrivox!==false?'checked':''}></label><p id="sync-status">${outgoingSyncError?e(outgoingSyncError):''}</p></section>`;
+}
 function renderSettings() {
-  content.innerHTML = heading('Make yourself <em>at home.</em>', 'A few small things to make your listening feel like yours.') + `<div class="settings-grid"><section class="settings-card"><h2>Your server libraries</h2><label class="setting-line">Enable LibriVox catalog search<input type="checkbox" role="switch" data-setting="includeLibrivox" ${settings.includeLibrivox !== false ? 'checked' : ''}></label><p>${config.libraries.length ? config.libraries.map(l => `${e(l.title)} · ${e(getServer(l.serverId)?.name || providerName(getServer(l.serverId)))}`).join('<br>') : 'Connect Plex, Audiobookshelf, Jellyfin, or Emby and choose your audiobook library.'}</p><div class="form-row"><button class="button" data-act="connect">${I('cloud')} Manage connection</button><button class="button outline" data-act="refresh" ${refreshBusy ? 'disabled' : ''}>${I('refresh')} Refresh</button></div><p id="sync-status">${outgoingSyncError ? e(outgoingSyncError) : config.libraries.length ? 'Playback progress syncs to the matching server. Bookmarks and lists stay on this device.' : ''}</p>${config.servers.length ? '<button class="text-button" data-act="disconnect">Disconnect servers from this device</button>' : ''}</section><section class="settings-card"><h2>Appearance</h2><label class="setting-line">Dark mode<input type="checkbox" role="switch" data-setting="darkMode" ${settings.darkMode ? 'checked' : ''}></label></section><section class="settings-card"><h2>The way you listen</h2><label class="setting-line">Default playback speed<select data-setting="speed">${[.5,.75,1,1.1,1.25,1.5,1.75,2,2.5,3].map(n => `<option value="${n}" ${settings.speed === n ? 'selected' : ''}>${n}×</option>`).join('')}</select></label><label class="setting-line">Smart rewind after a pause<input type="checkbox" data-setting="smartRewind" ${settings.smartRewind !== false ? 'checked' : ''}></label><label class="setting-line">Smart rewind seconds<input type="number" min="0" max="60" data-setting="rewindSeconds" value="${settings.rewindSeconds || 10}"></label><label class="setting-line">Keep screen awake while listening<input type="checkbox" data-setting="wakeLock" ${settings.wakeLock ? 'checked' : ''}></label><p>Each book remembers its own playback speed and sound settings. Space to pause, ← / → to skip, B to bookmark.</p></section><section class="settings-card"><h2>A little peace of mind</h2><p>Export your progress, reading list, bookmarks, listening history, and preferences. This backup contains no server tokens or downloaded audio.</p><div class="form-row"><button class="button secondary" data-act="export">Export backup</button><button class="button outline" data-act="import">Restore backup</button><input type="file" id="backup-file" class="backup-file" accept="application/json,.json"></div><p>Browser storage can be cleared or evicted. Keep a backup of the moments you care about.</p></section><section class="settings-card"><h2>Listening in the car</h2><p>Connect your iPhone to CarPlay, start an audiobook in Folio on your phone, then open <strong>Now Playing</strong> on the car display.</p><p>Use play/pause, rewind 15 seconds, forward 30 seconds, or chapter controls where your car and iOS make them available. Folio saves your place when playback pauses.</p><p>Available controls depend on your iPhone and car. Folio stays a web app; it has no separate CarPlay icon or library browser.</p></section><section class="settings-card"><h2>A place of your own</h2><p>Folio connects directly to your audiobook servers. Your credentials, library, and notes are stored in this browser. No Folio account or analytics. LibriVox catalog and audio requests go directly to LibriVox and Internet Archive.</p><div class="form-row"><a class="button secondary" href="./index.html#install">Install Folio ↗</a><button class="button outline" data-act="check-update">Check for updates</button></div><p>Downloads need HTTPS, a supported audio format, and available device storage. Background downloads are available in supported browsers. On iPhone and iPad, keep Folio open until downloads finish. Folio is independent of Plex and Prologue.</p><button class="text-button" data-act="clear-history">Clear listening history</button></section></div>`;
+  content.innerHTML = heading('Make yourself <em>at home.</em>', 'A few small things to make your listening feel like yours.') + `<div class="settings-grid">${serverSettingsCard()}<section class="settings-card"><h2>Appearance</h2><label class="setting-line">Dark mode<input type="checkbox" role="switch" data-setting="darkMode" ${settings.darkMode ? 'checked' : ''}></label></section><section class="settings-card"><h2>The way you listen</h2><label class="setting-line">Default playback speed<select data-setting="speed">${[.5,.75,1,1.1,1.25,1.5,1.75,2,2.5,3].map(n => `<option value="${n}" ${settings.speed === n ? 'selected' : ''}>${n}×</option>`).join('')}</select></label><label class="setting-line">Smart rewind after a pause<input type="checkbox" data-setting="smartRewind" ${settings.smartRewind !== false ? 'checked' : ''}></label><label class="setting-line">Smart rewind seconds<input type="number" min="0" max="60" data-setting="rewindSeconds" value="${settings.rewindSeconds || 10}"></label><label class="setting-line">Keep screen awake while listening<input type="checkbox" data-setting="wakeLock" ${settings.wakeLock ? 'checked' : ''}></label><p>Each book remembers its own playback speed and sound settings. Space to pause, ← / → to skip, B to bookmark.</p></section><section class="settings-card"><h2>A little peace of mind</h2><p>Export your progress, reading list, bookmarks, listening history, and preferences. This backup contains no server tokens or downloaded audio.</p><div class="form-row"><button class="button secondary" data-act="export">Export backup</button><button class="button outline" data-act="import">Restore backup</button><input type="file" id="backup-file" class="backup-file" accept="application/json,.json"></div><p>Browser storage can be cleared or evicted. Keep a backup of the moments you care about.</p></section><section class="settings-card"><h2>Listening in the car</h2><p>Connect your iPhone to CarPlay, start an audiobook in Folio on your phone, then open <strong>Now Playing</strong> on the car display.</p><p>Use play/pause, rewind 15 seconds, forward 30 seconds, or chapter controls where your car and iOS make them available. Folio saves your place when playback pauses.</p><p>Available controls depend on your iPhone and car. Folio stays a web app; it has no separate CarPlay icon or library browser.</p></section><section class="settings-card"><h2>A place of your own</h2><p>Folio connects directly to your audiobook servers. Your credentials, library, and notes are stored in this browser. No Folio account or analytics. LibriVox catalog and audio requests go directly to LibriVox and Internet Archive.</p><div class="form-row"><a class="button secondary" href="./index.html#install">Install Folio ↗</a><button class="button outline" data-act="check-update">Check for updates</button></div><p>Downloads need HTTPS, a supported audio format, and available device storage. Background downloads are available in supported browsers. On iPhone and iPad, keep Folio open until downloads finish. Folio is independent of Plex and Prologue.</p><button class="text-button" data-act="clear-history">Clear listening history</button></section></div>`;
 }
 function render() {
   $('#view-label').textContent = group || labels[view];
@@ -433,12 +443,42 @@ async function discover() {
   discovered=await plexAPI.resources(config.accountToken);
   connectionStatus(discovered.length ? `<p>Choose where your stories live.</p>${discovered.map((s,n)=>`<button class="server-option" data-act="connect-server" data-index="${n}">${e(s.name)}<span>${s.owned?'Your server':'Shared with you'} &nbsp; →</span></button>`).join('')}` : '<p class="error">No Plex servers are available to this account. Check server sharing and remote access.</p>');
 }
+const serverLibraryChoices = new Map();
+async function manageServer(id) {
+  const server=getServer(id);if(!server)return;
+  showModal('Manage server','<p class="loading">Loading libraries…</p>');
+  const version=modalVersion;
+  let libraries=config.libraries.filter(library=>library.serverId===id), error='';
+  try { libraries=await plexAPI.libraries(server); } catch(failure) { error=failure.message; }
+  if(version!==modalVersion || !getServer(id))return;
+  serverLibraryChoices.set(id,libraries);
+  showModal('Manage server',`<form id="server-settings" data-id="${e(id)}"><label class="field">Server name<input name="displayName" required maxlength="100" value="${e(serverLabel(server))}"></label><p>${e(providerName(server))} · ${e(serverAddress(server))}</p>${error?`<p class="error">${e(error)}</p>`:''}<fieldset class="server-libraries"><legend>Libraries</legend>${libraries.length?libraries.map(library=>`<label class="setting-line">${e(library.title)}<input type="checkbox" name="libraries" value="${e(library.id)}" ${config.libraries.some(saved=>saved.serverId===id&&String(saved.id)===String(library.id))?'checked':''}></label>`).join(''):'<p>No supported libraries found.</p>'}</fieldset><div class="form-row"><button class="button" type="submit">Save changes</button><button class="button outline" type="button" data-act="reconnect-server" data-id="${e(id)}">Reconnect</button></div></form>`);
+}
+async function saveServerLibraries(id, ids, displayName) {
+  const server=getServer(id);if(!server)throw new Error('This server is no longer connected.');
+  const selected=new Set(ids.map(String));
+  const choices=serverLibraryChoices.get(id)||config.libraries.filter(library=>library.serverId===id);
+  const libraries=choices.filter(library=>selected.has(String(library.id))).map(library=>({...library,serverId:id}));
+  server.displayName=String(displayName||'').trim().slice(0,100)||server.name;
+  config.libraries=[...config.libraries.filter(library=>library.serverId!==id),...libraries];
+  saveConfig();modal.close();render();
+  if(libraries.length)await refresh({serverId:id});
+}
+async function removeServer(id) {
+  if(!getServer(id))return;
+  if(player.book?.serverId===id && downloadRecords.get(player.book.id)?.status!=='complete')await stopCurrentBook(player.book.id);
+  await Promise.all(books.filter(book=>book.serverId===id&&downloadRecords.has(book.id)&&downloadRecords.get(book.id).status!=='complete').map(book=>downloads.cancel(book.id)));
+  config.servers=config.servers.filter(server=>server.id!==id);
+  config.libraries=config.libraries.filter(library=>library.serverId!==id);
+  serverLibraryChoices.delete(id);
+  saveConfig();modal.close();render();toast('Server removed. Downloads and saved progress are kept.');
+}
 let selectedServer, selectedLibraries=[];
 async function selectServer(server,validate=true) {
   connectionStatus('<p>Connecting to your server…</p>');
   selectedServer=validate ? await plexAPI.connect(server) : server;
   const index=config.servers.findIndex(s=>s.id===selectedServer.id);
-  if(index>=0) config.servers[index]=selectedServer; else config.servers.push(selectedServer);
+  if(index>=0) config.servers[index]=selectedServer={...config.servers[index],...selectedServer}; else config.servers.push(selectedServer);
   saveConfig(); selectedLibraries=await plexAPI.libraries(selectedServer);
   connectionStatus(selectedLibraries.length ? `<form id="library-connect"><p>Choose an audiobook library on ${e(selectedServer.name)}.</p><label class="field">Library<select name="library">${selectedLibraries.map(l=>`<option value="${e(l.id)}">${e(l.title)}</option>`).join('')}</select></label><button class="button" type="submit">Open my library ${I('arrow')}</button></form>` : '<p class="error">This account has no supported book or music libraries. Check the library type and your account’s permissions.</p>');
 }
@@ -471,27 +511,28 @@ async function loadLibrary(library,showProgress=false) {
   const savedBooks=await db.all('books');
   books=savedBooks.filter(b=>!b.demo);
 }
-function refresh({quiet=false,force=true}={}) {
-  if(refreshPromise)return refreshPromise;
-  if(!config.libraries.length)return quiet ? Promise.resolve() : (toast('Your added LibriVox books are ready. Use Find LibriVox books to add more.'),Promise.resolve());
+function refresh({quiet=false,force=true,serverId}={}) {
+  if(refreshPromise)return serverId ? refreshPromise.catch(()=>{}).then(()=>refresh({quiet,force,serverId})) : refreshPromise;
+  const libraries=config.libraries.filter(library=>!serverId||library.serverId===serverId);
+  if(!libraries.length)return quiet ? Promise.resolve() : (toast(serverId?'Choose libraries for this server from Manage.':'Add a server or find LibriVox books to start your library.'),Promise.resolve());
   if(quiet&&!force&&Date.now()-lastPlexPull<30000)return Promise.resolve();
-  refreshBusy=true;
+  refreshBusy=true;refreshingServerId=serverId||null;
   incomingSyncStatus='Reading played status and progress from your servers…';
-  if(view==='settings'&&$('#sync-status'))$('#sync-status').textContent=incomingSyncStatus;
+  if(view==='settings')render();
   if(!quiet)toast('Refreshing your libraries and progress…');
   refreshPromise=(async()=>{
     // Pending offline checkpoints are sent before reading the server snapshot.
-    await flushSync();
+    await flushSync(serverId);
     const errors=[];
     const unavailable=new Set();
     if(force) {
-      for(const server of config.servers) {
+      for(const server of config.servers.filter(server=>!serverId||server.id===serverId)) {
         try{Object.assign(server,await plexAPI.connect(server));}
         catch(error){unavailable.add(server.id);errors.push(`${server.name || providerName(server)}: ${error.message}`);}
       }
       saveConfig();
     }
-    for(const library of config.libraries) {
+    for(const library of libraries) {
       if(unavailable.has(library.serverId))continue;
       try{await loadLibrary(library);}catch(error){errors.push(`${library.title}: ${error.message}`);}
     }
@@ -502,14 +543,14 @@ function refresh({quiet=false,force=true}={}) {
   })().catch(error=>{
     incomingSyncStatus=`Server progress could not refresh. Saved progress is still available. ${error.message}`;
     if(!quiet)throw error;
-  }).finally(()=>{refreshBusy=false;refreshPromise=null;render();});
+  }).finally(()=>{refreshBusy=false;refreshingServerId=null;refreshPromise=null;render();});
   return refreshPromise;
 }
-async function flushSync() {
+async function flushSync(serverId) {
   if(syncing || !navigator.onLine) return;
   syncing=true;
   try {
-    const pending=(await db.all('sync')).sort((a,b)=>a.updatedAt-b.updatedAt || Number(b.markPlayed!=null)-Number(a.markPlayed!=null));
+    const pending=(await db.all('sync')).filter(item=>!serverId||item.serverId===serverId).sort((a,b)=>a.updatedAt-b.updatedAt || Number(b.markPlayed!=null)-Number(a.markPlayed!=null));
     const failedBooks=new Set();
     for(const item of pending) {
       const bookId=item.bookId||item.id;
@@ -616,6 +657,11 @@ document.addEventListener('click',async event=>{
       case 'menu':document.body.classList.toggle('nav-open');break;
       case 'close':modal.close();break;
       case 'connect':showConnect();break;
+      case 'manage-server':await manageServer(id);break;
+      case 'refresh-server':await refresh({serverId:id});break;
+      case 'reconnect-server':{const server=getServer(id);if(server){showConnect(server.provider||'plex');const input=$('input[name="url"]',modal);if(input)input.value=server.url||'';}break;}
+      case 'remove-server':{const server=getServer(id);if(server)showModal('Remove server?',`<p>Remove “${e(serverLabel(server))}” from this device? Downloaded books and saved progress are kept.</p><div class="modal-actions"><button class="button outline" data-act="close">Keep server</button><button class="button" data-act="confirm-remove-server" data-id="${e(id)}">Remove server</button></div>`);break;}
+      case 'confirm-remove-server':await removeServer(id);break;
       case 'plex-login':beginLogin();break;
       case 'discover':await discover();break;
       case 'connect-server':await selectServer(discovered[Number(index)]);break;
@@ -667,7 +713,8 @@ document.addEventListener('click',async event=>{
 document.addEventListener('submit',async event=>{
   event.preventDefault();const form=event.target;const data=new FormData(form);const button=$('[type=submit]',form);if(button)button.disabled=true;
   try {
-    if(form.id==='librivox-search'){await searchLibriVox(data.get('query'),data.get('field'));}
+    if(form.id==='server-settings'){await saveServerLibraries(form.dataset.id,data.getAll('libraries'),data.get('displayName'));}
+    else if(form.id==='librivox-search'){await searchLibriVox(data.get('query'),data.get('field'));}
     else if(form.id==='manual-connect') {const server=await plexAPI.validateServer({url:data.get('url'),token:data.get('token')});form.reset();await selectServer(server,false);}
     else if(form.id==='server-login') {const server=await plexAPI.login(Object.fromEntries(data));form.reset();await selectServer(server,false);}
     else if(form.id==='library-connect') {
@@ -677,7 +724,7 @@ document.addEventListener('submit',async event=>{
     } else if(form.id==='bookmark-form') {
       const b=JSON.parse(data.get('bookmark'));b.note=String(data.get('note')).trim();b.updatedAt=Date.now();await db.put('bookmarks',b);bookmarks=await db.all('bookmarks');modal.close();render();toast('Moment saved.');
     } else if(form.id==='sleep-form') {player.setSleep(Number(data.get('minutes')));modal.close();toast(`Sleep timer set for ${data.get('minutes')} minutes.`);}
-  } catch(error) {toast(error.message,true);if(['manual-connect','server-login','library-connect'].includes(form.id))connectionStatus(`<p class="error">${e(error.message)}</p>`);}
+  } catch(error) {toast(error.message,true);if(['manual-connect','server-login','library-connect','server-settings'].includes(form.id))connectionStatus(`<p class="error">${e(error.message)}</p>`);}
   finally {if(button?.isConnected)button.disabled=false;}
 });
 document.addEventListener('pointerdown',event=>{
@@ -763,7 +810,7 @@ async function boot() {
   try {
     await downloads.ready;await removeLegacySamples(db,downloads);await retireAutomaticCatalog(db);await reloadState();render();networkState();
     const pin=JSON.parse(sessionStorage.getItem('folio.pin')||'null');if(pin){showConnect();pollPin(pin.id,pin.startedAt);}
-    const latest=books.filter(b=>progress.get(b.id)?.elapsed>0&&!progress.get(b.id).completed).sort((a,b)=>progress.get(b.id).updatedAt-progress.get(a.id).updatedAt)[0];
+    const latest=libraryBooks().filter(b=>progress.get(b.id)?.elapsed>0&&!progress.get(b.id).completed).sort((a,b)=>progress.get(b.id).updatedAt-progress.get(a.id).updatedAt)[0];
     if(latest?.tracks?.length){await workerReady;await player.open(latest,{autoplay:false});updatePlayer();}
   }catch(error){content.innerHTML=empty('Your shelf couldn’t open.',`${e(error.message)} Enable browser storage and reload Folio.`,'book');}
 }

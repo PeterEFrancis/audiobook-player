@@ -160,7 +160,7 @@ test('LibriVox refresh never imports a remote unplayed reset', async () => {
 });
 
 test('the library includes only selected LibriVox books and keeps them when search is disabled', () => {
-  const context=vm.createContext({settings:{includeLibrivox:true},books:[{id:'librivox:47',librivox:true},{id:'librivox:153',librivox:true,inLibrary:true},{id:'personal'}]});
+  const context=vm.createContext({settings:{includeLibrivox:true},config:{libraries:[{serverId:'personal-server',id:'books'}]},downloadRecords:new Map(),books:[{id:'librivox:47',librivox:true},{id:'librivox:153',librivox:true,inLibrary:true},{id:'personal',serverId:'personal-server',libraryId:'books'}]});
   vm.runInContext(extract('function libraryBooks()', 'function activeLibraries()'),context);
   assert.deepEqual(Array.from(context.libraryBooks(),book=>book.id),['librivox:153','personal']);
   context.settings.includeLibrivox=false;
