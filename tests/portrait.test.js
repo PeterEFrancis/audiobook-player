@@ -2,84 +2,67 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {bindPortraitMode} from '../js/portrait.js';
 
-function setup({width = 390, height = 844, touch = 5, type = 'portrait-primary', legacy, lock = 'resolve'} = {}) {
-  const calls = [], layer = [];
-  const win = new EventTarget(), doc = new EventTarget(), guard = new EventTarget();
-  const original = {isConnected: true, focused: 0, focus() { this.focused++; doc.activeElement = this; }};
+function setup({width = 390, height = 844, touch = 5, standalone = true, lock = 'resolve'} = {}) {
+  const calls = [], win = new EventTarget(), doc = new EventTarget();
   const orientation = new EventTarget();
-  orientation.type = type;
   if (lock !== 'absent') orientation.lock = async value => {
     calls.push(value);
     if (lock === 'reject') throw new Error('Orientation locking unavailable');
   };
   Object.assign(win, {
-    screen: {width, height, ...(type === undefined ? {} : {orientation})},
-    navigator: {maxTouchPoints: touch, standalone: true},
-    matchMedia: () => ({matches: true}),
-    innerWidth: width, innerHeight: height, orientation: legacy,
+    screen: {width, height, orientation},
+    navigator: {maxTouchPoints: touch, standalone},
+    matchMedia: () => ({matches: standalone}),
+    alert() { throw new Error('Orientation must not display blocking UI'); },
   });
-  if (legacy !== undefined) delete win.screen.orientation;
-  Object.assign(doc, {activeElement: original, hidden: false, visibilityState: 'visible', fullscreenElement: null});
-  Object.assign(guard, {
-    open: false,
-    showModal() { if (!this.open) { this.open = true; layer.push(this); } doc.activeElement = this; },
-    close() { this.open = false; const at = layer.indexOf(this); if (at >= 0) layer.splice(at, 1); },
+  Object.assign(doc, {
+    hidden: false, visibilityState: 'visible', fullscreenElement: null,
+    createElement() { throw new Error('Orientation must not create an overlay'); },
   });
-  const enforce = bindPortraitMode(guard, {win, doc});
-  return {win, doc, guard, original, calls, layer, orientation, enforce};
+  bindPortraitMode({win, doc});
+  return {win, doc, calls};
 }
 const settled = () => new Promise(resolve => setImmediate(resolve));
 
-test('unsupported or rejected locks keep a landscape guard above app dialogs and restore focus in portrait', async () => {
+test('installed phones request portrait and retry on foreground and user interaction', async () => {
+  const {win, doc, calls} = setup();
+  await settled();
+  assert.deepEqual(calls, ['portrait-primary']);
+  doc.hidden = true;
+  doc.dispatchEvent(new Event('visibilitychange'));
+  await settled();
+  assert.equal(calls.length, 1);
+  doc.hidden = false;
+  doc.dispatchEvent(new Event('visibilitychange'));
+  await settled();
+  assert.equal(calls.length, 2);
+  win.dispatchEvent(new Event('pointerup'));
+  await settled();
+  assert.deepEqual(calls, ['portrait-primary', 'portrait-primary', 'portrait-primary']);
+});
+
+test('missing or rejected native locking stays quiet and does not block interaction', async () => {
   for (const lock of ['absent', 'reject']) {
-    const state = setup({width: 844, height: 390, type: 'landscape-primary', lock});
-    const {win, guard, original, calls, layer, orientation, enforce} = state;
+    const {win, doc, calls} = setup({lock});
     await settled();
-    assert.equal(guard.open, true);
-    if (lock === 'reject') assert.deepEqual(calls, ['portrait-primary']);
-    const appModal = {open: true};
-    layer.push(appModal);
-    enforce();
-    assert.equal(layer.at(-1), guard, 'guard is raised above a newly opened modal');
-    assert.equal(appModal.open, true, 'the underlying player remains open');
-    const cancel = new Event('cancel', {cancelable: true});
-    guard.dispatchEvent(cancel);
-    assert.equal(cancel.defaultPrevented, true);
-    orientation.type = 'portrait-primary';
-    Object.assign(win.screen, {width: 390, height: 844});
-    orientation.dispatchEvent(new Event('change'));
+    win.dispatchEvent(new Event('pointerup'));
     await settled();
-    assert.equal(guard.open, false);
-    assert.equal(original.focused, 1);
-    assert.equal(appModal.open, true);
+    doc.dispatchEvent(new Event('visibilitychange'));
+    await settled();
+    assert.equal(calls.length, lock === 'absent' ? 0 : 3);
   }
 });
 
-test('opening the keyboard in physical portrait does not show a landscape guard', async () => {
-  const {win, doc, guard} = setup();
-  Object.assign(win, {innerWidth: 390, innerHeight: 200});
-  win.dispatchEvent(new Event('resize'));
-  doc.dispatchEvent(new Event('visibilitychange'));
-  win.dispatchEvent(new Event('pointerup'));
-  await settled();
-  assert.equal(guard.open, false);
-});
-
-test('desktop and tablets are unaffected while legacy iPhone angles control the guard', async () => {
+test('desktop, tablet, and ordinary browser sessions do not request orientation locks', async () => {
   for (const options of [
     {width: 1920, height: 1080, touch: 0},
     {width: 1024, height: 768, touch: 5},
+    {standalone: false},
   ]) {
-    const {win, guard, calls} = setup({...options, type: 'landscape-primary'});
-    win.dispatchEvent(new Event('resize'));
+    const {win, doc, calls} = setup(options);
+    win.dispatchEvent(new Event('pointerup'));
+    doc.dispatchEvent(new Event('visibilitychange'));
     await settled();
-    assert.equal(guard.open, false);
     assert.deepEqual(calls, []);
   }
-  const {win, guard} = setup({legacy: 90});
-  assert.equal(guard.open, true);
-  win.orientation = 0;
-  win.dispatchEvent(new Event('orientationchange'));
-  await settled();
-  assert.equal(guard.open, false);
 });
