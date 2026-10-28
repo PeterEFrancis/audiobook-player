@@ -211,7 +211,7 @@ function render() {
   else if (view === 'settings') {
     renderSettings();
     $('.page-heading h1',content).textContent = 'Settings';
-    $('.page-heading .lead',content).textContent = 'Your listening space.';
+    $('.page-heading .lead',content).remove();
     if (incomingSyncStatus) $('#sync-status').textContent = incomingSyncStatus;
   }
 }
