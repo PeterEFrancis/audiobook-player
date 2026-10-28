@@ -1,1 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#183f32"/><path d="M145 110h113c72 0 125 54 125 125v167H270c-72 0-125-54-125-125V110Z" fill="#d6e6aa"/><path d="M203 183h95M203 251h126M203 319h95" fill="none" stroke="#183f32" stroke-width="18" stroke-linecap="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Folio audiobooks</title>
+  <rect width="512" height="512" rx="112" fill="#183f32"/>
+  <path d="M132 270v-34c0-69 55-124 124-124s124 55 124 124v34" fill="none" stroke="#d6e6aa" stroke-width="28" stroke-linecap="round"/>
+  <rect x="98" y="242" width="58" height="114" rx="25" fill="#d6e6aa"/>
+  <rect x="356" y="242" width="58" height="114" rx="25" fill="#d6e6aa"/>
+  <path d="M177 240c28-8 54-3 79 11 25-14 51-19 79-11v130c-30-8-56-4-79 10-23-14-49-18-79-10V240Z" fill="#d6e6aa"/>
+  <path d="M256 253v121M198 281c12 0 24 3 35 8m-35 25c12 0 24 3 35 8m81-41c-12 0-24 3-35 8m35 25c-12 0-24 3-35 8" fill="none" stroke="#183f32" stroke-width="10" stroke-linecap="round"/>
+</svg>

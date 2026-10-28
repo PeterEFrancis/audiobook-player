@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#183f32">
   <meta name="description" content="A quieter home for your audiobooks. Listen to your Plex, Audiobookshelf, Jellyfin, or Emby library with Folio, an installable audiobook player with offline listening, chapters, bookmarks, and more.">
   <title>Folio — Make room for a good story.</title>
-  <link rel="icon" href="./assets/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="./assets/icon-192.png">
+  <link rel="icon" href="./assets/icon.svg?v=audio-1" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./assets/icon-192.png?v=audio-1">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="stylesheet" href="./css/landing.css">
   <script src="./js/install.js" defer></script>
@@ -15,7 +15,7 @@
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header">
-    <a class="wordmark" href="./index.html" aria-label="Folio home"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 6h9c5 0 9 4 9 9v11h-8c-5 0-10-4-10-9V6Z" fill="currentColor"/><path d="M12 11h6M12 16h8M12 21h6" stroke="#d6e6aa" stroke-width="1.6" stroke-linecap="round"/></svg>folio<span class="wordmark-dot">.</span></a>
+    <a class="wordmark" href="./index.html" aria-label="Folio home"><img class="folio-mark" src="./assets/icon.svg?v=audio-1" alt="" aria-hidden="true" width="36" height="36">folio<span class="wordmark-dot">.</span></a>
     <nav aria-label="Main navigation"><a href="#install">Install</a><a href="#faq">Questions</a></nav>
     <a class="button button-small button-outline header-cta" href="./app.html">Open player <span aria-hidden="true">↗</span></a>
   </header>
@@ -31,7 +31,7 @@
       <div class="hero-art" aria-label="An illustration of the Folio audiobook library and player">
         <div class="app-preview">
           <div class="preview-windowbar"><b>9:41</b><span class="phone-island"></span><span class="phone-signal" aria-hidden="true">▮▮▮ ▰</span></div>
-          <div class="phone-app-header"><span>folio.</span><span class="phone-connected"><i></i> Online</span></div>
+          <div class="phone-app-header"><span><img class="folio-mark" src="./assets/icon.svg?v=audio-1" alt="" aria-hidden="true" width="36" height="36">folio.</span><span class="phone-connected"><i></i> Online</span></div>
           <div class="phone-search"><span aria-hidden="true">⌕</span> Search your library</div>
           <div class="preview-content"><div class="preview-main"><div class="preview-heading"><div><h2>Library</h2><small>YOUR STORIES, RIGHT HERE.</small></div></div><div class="preview-current"><img src="./assets/cover-walden.svg" alt="Walden cover" width="56" height="56"><div><span class="preview-label">CONTINUE LISTENING</span><h3>Walden</h3><span class="preview-bookname">Henry David Thoreau</span><div class="preview-progress"><i></i></div><small>68% listened · 2h 14m left</small><span class="preview-listen"><span>▶</span> Continue</span></div></div><div class="preview-shelf-heading"><b>All books</b><span>4 books</span></div><div class="preview-books"><div><img src="./assets/cover-sea.svg" alt="Moby-Dick cover" width="106" height="106"><b>Moby-Dick</b><span>Herman Melville</span></div><div><img src="./assets/cover-pride.svg" alt="Pride and Prejudice cover" width="106" height="106"><b>Pride and Prejudice</b><span>Jane Austen</span></div></div></div></div>
           <div class="preview-player"><img src="./assets/cover-walden.svg" alt="" width="25" height="25"><div><b>Walden</b><span>Henry David Thoreau</span></div><span class="preview-player-play">Ⅱ</span><span class="preview-player-skip">↷</span></div>
@@ -84,7 +84,7 @@
       </div>
     </section>
   </main>
-  <footer class="site-footer section-width"><a class="wordmark" href="./index.html">folio<span class="wordmark-dot">.</span></a><a href="https://github.com/PeterEFrancis/audiobook-player">GitHub <span aria-hidden="true">↗</span></a></footer>
+  <footer class="site-footer section-width"><a class="wordmark" href="./index.html"><img class="folio-mark" src="./assets/icon.svg?v=audio-1" alt="" aria-hidden="true" width="36" height="36">folio<span class="wordmark-dot">.</span></a><a href="https://github.com/PeterEFrancis/audiobook-player">GitHub <span aria-hidden="true">↗</span></a></footer>
   <!-- Keep older cached install scripts working during an update. -->
   <span id="install-button" hidden></span><span id="install-message" hidden></span>
 </body>

@@ -10,8 +10,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>Your library · Folio</title>
   <link rel="manifest" href="./manifest.webmanifest">
-  <link rel="icon" href="./assets/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="./assets/icon-192.png">
+  <link rel="icon" href="./assets/icon.svg?v=audio-1" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./assets/icon-192.png?v=audio-1">
   <script src="./js/theme.js"></script>
   <link rel="stylesheet" href="./css/app.css">
   <link rel="stylesheet" href="./css/dark.css">
@@ -21,7 +21,7 @@
   <a class="skip-link" href="#content">Skip to library</a>
   <div class="sidebar-shade" data-act="menu"></div>
   <aside class="sidebar" aria-label="Main navigation">
-    <a class="brand" href="./index.html"><span class="brand-mark" aria-hidden="true">f.</span>folio<span class="brand-dot">●</span></a>
+    <a class="brand" href="./index.html"><img class="folio-mark" src="./assets/icon.svg?v=audio-1" alt="" aria-hidden="true" width="36" height="36">folio<span class="brand-dot">●</span></a>
     <nav>
       <button class="nav-item active" data-view="library"><span data-icon="library"></span>Your library</button>
       <button class="nav-item" data-view="continue"><span data-icon="headphones"></span>Continue listening</button>
@@ -39,7 +39,7 @@
   </aside>
   <div class="workspace">
     <header class="topbar">
-      <div class="app-topline"><button class="app-wordmark" data-view="library" aria-label="Folio library">folio<span>.</span></button><span id="network-label" class="network-label"><span class="status-dot"></span>Online</span></div>
+      <div class="app-topline"><button class="app-wordmark" data-view="library" aria-label="Folio library"><img class="folio-mark" src="./assets/icon.svg?v=audio-1" alt="" aria-hidden="true" width="36" height="36">folio<span>.</span></button><span id="network-label" class="network-label"><span class="status-dot"></span>Online</span></div>
       <label class="search"><span data-icon="search"></span><input id="search" type="search" placeholder="Books, authors, collections" aria-label="Search library"></label>
       <span id="view-label" hidden></span>
     </header>

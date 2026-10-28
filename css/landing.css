@@ -37,3 +37,4 @@
 @media(max-width:900px){.install-layout,.faq-section{gap:40px}}
 @media(max-width:680px){.hero{padding-top:18px}.hero-description{font-size:15px}.hero-actions{gap:20px}.hero-art{height:580px}.install-layout,.faq-section{padding-block:44px}.install-intro h2{font-size:38px}.install-guide{margin-top:30px}.install-tabs{gap:28px}.install-tabs button{font-size:12px}.faq-section>.faq-list{margin-top:24px}.site-footer{min-height:82px}}
 @media(max-width:370px){.hero-art{height:535px}.hero-actions{gap:14px}}
+.wordmark>.folio-mark{width:34px;height:34px;flex-shrink:0;margin-right:2px;border-radius:8px}.site-footer .wordmark>.folio-mark{width:28px;height:28px}.phone-app-header .folio-mark{display:inline-block;width:24px;height:24px;vertical-align:-4px;margin-right:5px;border-radius:6px}
