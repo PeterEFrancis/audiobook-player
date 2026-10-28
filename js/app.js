@@ -21,7 +21,10 @@ const paths = {
   cloud:'M7 18a5 5 0 110-10 6 6 0 0112 1 4.5 4.5 0 01-1 9M9 14l3-3 3 3m-3-3v10',leaf:'M5 20C1 6 13 3 21 3c0 8-3 18-12 14M5 20L16 9',
   queue:'M3 5h18M3 11h18M3 17h10m4-2l5 3-5 3z',volume:'M3 9h4l5-5v16l-5-5H3zM16 8a6 6 0 010 8m3-11a10 10 0 010 14',previous:'M5 4v16m14-16L7 12l12 8z',next:'M19 4v16M5 4l12 8-12 8z',book:'M3 3h6l3 3 3-3h6v16h-6l-3 3-3-3H3zM12 6v16'
 };
-const I = name => `<svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="${paths[name] || paths.book}"/></svg>`;
+function I(name) {
+  if(name==='back'||name==='forward')return `<svg class="icon skip-icon" aria-hidden="true" viewBox="0 0 32 32"><g ${name==='forward'?'transform="translate(32 0) scale(-1 1)"':''}><path d="M7.5 7.5A12 12 0 1 1 5.6 22M7.5 1.5v6h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g><text x="16" y="20" text-anchor="middle" fill="currentColor" stroke="none" font-family="Arial, sans-serif" font-size="10" font-weight="600">${name==='back'?'15':'30'}</text></svg>`;
+  return `<svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="${paths[name] || paths.book}"/></svg>`;
+}
 const $ = (selector, root = document) => root.querySelector(selector);
 const content = $('#content');
 const modal = $('#modal');
@@ -54,6 +57,7 @@ const workerReady = prepareWorker();
 const player = new Player({plex, downloads, getServer, artworkURL: cover, settings});
 
 document.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = I(el.dataset.icon));
+document.querySelectorAll('.transport [data-act=back] small,.transport [data-act=forward] small').forEach(el=>el.remove());
 function saveConfig() { localStorage.setItem('folio.connection', JSON.stringify(config)); }
 function cover(book) {
   if (downloadRecords.get(book.id)?.status === 'complete') return downloads.artworkURL(book.id);
@@ -366,7 +370,7 @@ function showNowPlaying() {
   if (!player.book) { toast('Choose a book to start listening.'); return; }
   const b = player.book;
   const chapter = playbackChapter(b,player.index,player.position);
-  showModal('Now playing', `${image(b,'now-cover')}<div class="now-text"><p class="eyebrow">A LITTLE MORE LOST IN THE STORY</p><h3>${e(b.title)}</h3><p>${e(b.author)}</p><small id="now-chapter"></small></div><div class="now-controls"><div class="scrubber"><span id="now-time">0:00</span><input type="range" id="now-seek" min="0" max="${chapter.duration}" value="${chapter.elapsed}" step=".1" aria-label="Chapter playback position"><span id="now-duration">${clock(chapter.duration)}</span></div><div class="transport"><button class="icon-button" data-act="prev-chapter" aria-label="Previous chapter">${I('previous')}</button><button class="icon-button" data-act="back" aria-label="Rewind 15 seconds">${I('back')}<small>15</small></button><button class="play-button" data-act="toggle" id="now-play" aria-label="Play">${I('play')}</button><button class="icon-button" data-act="forward" aria-label="Forward 30 seconds">${I('forward')}<small>30</small></button><button class="icon-button" data-act="next-chapter" aria-label="Next chapter">${I('next')}</button></div><div class="now-tools"><button data-act="speed">${I('volume')}<span id="now-speed">${player.speed}× speed</span></button><button data-act="sleep">${I('moon')}<span id="now-sleep">Sleep timer</span></button><button data-act="add-bookmark">${I('bookmark')}Bookmark</button><button data-act="queue-view">${I('queue')}Up next</button></div><div class="now-tools"><button data-act="detail" data-id="${e(b.id)}">Chapters & notes ↗</button><small id="now-offline" class="text-button"></small></div></div>`, 'player-modal');
+  showModal('Now playing', `${image(b,'now-cover')}<div class="now-text"><p class="eyebrow">A LITTLE MORE LOST IN THE STORY</p><h3>${e(b.title)}</h3><p>${e(b.author)}</p><small id="now-chapter"></small></div><div class="now-controls"><div class="scrubber"><span id="now-time">0:00</span><input type="range" id="now-seek" min="0" max="${chapter.duration}" value="${chapter.elapsed}" step=".1" aria-label="Chapter playback position"><span id="now-duration">${clock(chapter.duration)}</span></div><div class="transport"><button class="icon-button" data-act="prev-chapter" aria-label="Previous chapter">${I('previous')}</button><button class="icon-button" data-act="back" aria-label="Rewind 15 seconds">${I('back')}</button><button class="play-button" data-act="toggle" id="now-play" aria-label="Play">${I('play')}</button><button class="icon-button" data-act="forward" aria-label="Forward 30 seconds">${I('forward')}</button><button class="icon-button" data-act="next-chapter" aria-label="Next chapter">${I('next')}</button></div><div class="now-tools"><button data-act="speed">${I('volume')}<span id="now-speed">${player.speed}× speed</span></button><button data-act="sleep">${I('moon')}<span id="now-sleep">Sleep timer</span></button><button data-act="add-bookmark">${I('bookmark')}Bookmark</button><button data-act="queue-view">${I('queue')}Up next</button></div><div class="now-tools"><button data-act="detail" data-id="${e(b.id)}">Chapters & notes ↗</button><small id="now-offline" class="text-button"></small></div></div>`, 'player-modal');
   updatePlayer();
 }
 function updatePlayer() {
