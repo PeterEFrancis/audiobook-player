@@ -1,5 +1,5 @@
 importScripts('js/background-downloads-sw.js');
-const SHELL_CACHE = 'folio-shell-v47';
+const SHELL_CACHE = 'folio-shell-v48';
 const MEDIA_CACHE = 'folio-media-v1';
 const ROOT = new URL(self.registration.scope);
 const SHELL = [
