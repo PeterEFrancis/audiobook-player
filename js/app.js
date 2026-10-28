@@ -212,7 +212,6 @@ function render() {
     renderSettings();
     $('.page-heading h1',content).textContent = 'Settings';
     $('.page-heading .lead',content).textContent = 'Your listening space.';
-    $('.page-heading',content).insertAdjacentHTML('afterend',`<div class="more-menu">${[['bookmarks','bookmark','Bookmarks'],['collections','collection','Collections & authors'],['history','history','Listening history'],['continue','headphones','Continue listening']].map(([route,icon,title]) => `<button class="more-item" data-view="${route}"><span>${I(icon)}</span><strong>${title}</strong><span>›</span></button>`).join('')}</div>`);
     if (incomingSyncStatus) $('#sync-status').textContent = incomingSyncStatus;
   }
 }
