@@ -23,3 +23,4 @@
 @media(min-width:900px){.sidebar>nav{margin-top:44px}}
 .book-modal .modal-handle:focus-visible{outline:none}
 .book-modal .modal-handle:focus-visible:before{outline:2px solid #819d60;outline-offset:4px}
+#sync-status:empty{display:none}
