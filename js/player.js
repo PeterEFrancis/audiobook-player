@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { absolutePosition, locatePosition, sumDuration, chaptersFor } from './utils.js';
+import { absolutePosition, locatePosition, sumDuration, chaptersFor, playbackChapter } from './utils.js';
 
 export class Player extends EventTarget {
   constructor({plex, downloads, getServer, artworkURL, settings = {}}) {
@@ -79,9 +79,10 @@ export class Player extends EventTarget {
       return;
     }
     this.updateMetadata();
-    const duration = sumDuration(this.book);
-    if (session.setPositionState && Number.isFinite(duration) && duration > 0 && Number.isFinite(this.elapsed) && this.speed > 0) {
-      try { session.setPositionState({duration, playbackRate: this.speed, position: Math.max(0, Math.min(this.elapsed, duration))}); } catch {}
+    const chapter = playbackChapter(this.book, this.index, this.position);
+    const duration = chapter.duration;
+    if (session.setPositionState && Number.isFinite(duration) && duration > 0 && Number.isFinite(chapter.elapsed) && this.speed > 0) {
+      try { session.setPositionState({duration, playbackRate: this.speed, position: chapter.elapsed}); } catch {}
     } else {
       try { session.setPositionState?.(); } catch {}
     }
@@ -369,7 +370,13 @@ export class Player extends EventTarget {
   setupMediaSession() {
     if (!navigator.mediaSession) return;
     const pause = async () => { this.audio.pause(); await this.persist(); this.emit(); };
-    const actions = {play: () => this.play(), pause, stop: pause, seekbackward: d => this.skip(-(d.seekOffset || 15)), seekforward: d => this.skip(d.seekOffset || 30), previoustrack: () => this.chapter(-1), nexttrack: () => this.chapter(1), seekto: d => { if (this.book && Number.isFinite(d.seekTime)) return this.seek(d.seekTime); }};
+    const actions = {play: () => this.play(), pause, stop: pause, seekbackward: d => this.skip(-(d.seekOffset || 15)), seekforward: d => this.skip(d.seekOffset || 30), previoustrack: () => this.chapter(-1), nexttrack: () => this.chapter(1), seekto: d => {
+      if (!this.book || !Number.isFinite(d.seekTime)) return;
+      const chapter = playbackChapter(this.book, this.index, this.position);
+      if (!Number.isFinite(chapter.duration) || chapter.duration <= 0) return;
+      const offset = Math.max(0, Math.min(d.seekTime, Math.max(0, chapter.duration - 0.05)));
+      return this.seek(chapter.absolute + offset);
+    }};
     for (const [action, handler] of Object.entries(actions)) {
       try {
         navigator.mediaSession.setActionHandler(action, details => {

@@ -48,7 +48,7 @@ Folio prepares the next audio source while a chapter is playing and starts it on
 
 Connect your iPhone to CarPlay, start a book in Folio on the phone, then open **Now Playing** on the car display. If another app is shown, select the current audio source or return to Folio on the phone and press Play.
 
-Folio supplies the book title, author, cover, playback position, and media controls to iOS. Play/pause, back 15 seconds, forward 30 seconds, previous/next chapter, and scrubbing are available where iOS and your vehicle expose them. The visible buttons and background playback behavior depend on the browser, iOS, and vehicle; verify operation while parked. Folio has no dedicated CarPlay icon or dashboard library browser. [Apple describes the shared Now Playing experience](https://developer.apple.com/videos/play/wwdc2017/719/).
+Folio supplies the book title, author, cover, current chapter position and duration, and media controls to iOS. The Now Playing timeline seeks within the current chapter, including embedded chapters. Play/pause, back 15 seconds, forward 30 seconds, previous/next chapter, and scrubbing are available where iOS and your vehicle expose them. The visible buttons and background playback behavior depend on the browser, iOS, and vehicle; verify operation while parked. Folio has no dedicated CarPlay icon or dashboard library browser. [Apple describes the shared Now Playing experience](https://developer.apple.com/videos/play/wwdc2017/719/).
 
 ## Reading state and privacy
 

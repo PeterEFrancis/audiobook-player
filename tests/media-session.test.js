@@ -35,7 +35,7 @@ function setup(t, unsupported) {
   return { player, handlers, mediaSession, writes, errors, action };
 }
 
-test('system controls preserve the whole-book timeline across files, pause and completion', async t => {
+test('system controls use a chapter timeline while preserving whole-book resume progress', async t => {
   const { player, mediaSession, writes, action } = setup(t);
   await player.open(book(), { autoplay: false });
   player.audio.metadata();
@@ -43,14 +43,14 @@ test('system controls preserve the whole-book timeline across files, pause and c
   assert.equal(mediaSession.metadata.artist, 'The Author');
   assert.equal(mediaSession.metadata.album, 'Chapter 2');
   assert.equal(mediaSession.playbackState, 'paused');
-  assert.deepEqual(mediaSession.position, { duration: 200, position: 125, playbackRate: 1 });
+  assert.deepEqual(mediaSession.position, { duration: 100, position: 25, playbackRate: 1 });
   await action('seekbackward', { seekOffset: 30 });
   player.audio.metadata();
   assert.equal(player.index, 0);
   assert.equal(player.position, 95);
-  await action('seekto', { seekTime: 150 });
+  await action('seekto', { seekTime: 50 });
   player.audio.metadata();
-  assert.equal(player.index, 1);
+  assert.equal(player.index, 0);
   assert.equal(player.position, 50);
   await action('play');
   assert.equal(mediaSession.playbackState, 'playing');
@@ -67,7 +67,7 @@ test('system controls preserve the whole-book timeline across files, pause and c
   await action('nexttrack');
   player.audio.metadata();
   assert.equal(player.elapsed, 100);
-  await action('seekto', { seekTime: 150 });
+  await action('seekto', { seekTime: 50 });
   await action('play');
   await action('stop');
   assert.equal(player.position, 50);
@@ -79,7 +79,7 @@ test('system controls preserve the whole-book timeline across files, pause and c
   player.audio.ended = true;
   await player.ended();
   assert.equal(mediaSession.playbackState, 'paused');
-  assert.equal(mediaSession.position.position, 200);
+  assert.equal(mediaSession.position.position, 100);
   player.book = null;
   player.emit();
   assert.equal(mediaSession.playbackState, 'none');
@@ -109,11 +109,11 @@ test('unavailable system actions and rejected commands leave other controls usab
   assert.equal(player.playing, false);
 });
 
-test('embedded chapter changes refresh system metadata while retaining the book title', async t => {
-  const { player, mediaSession } = setup(t);
+test('embedded chapter changes reset system time and map chapter seeks to absolute resume progress', async t => {
+  const { player, mediaSession, action, writes } = setup(t);
   const selected = book();
-  selected.tracks[0].chapters = [{ title: 'Opening', start: 0, end: 40 }, { title: 'Into the woods', start: 40, end: 100 }];
-  await player.open(selected, { index: 0, position: 0, autoplay: false });
+  selected.tracks[1].chapters = [{ title: 'Opening', start: 0, end: 40 }, { title: 'Into the woods', start: 40, end: 100 }];
+  await player.open(selected, { index: 1, position: 0, autoplay: false });
   player.audio.metadata();
   assert.equal(mediaSession.metadata.album, 'Opening');
   player.audio.currentTime = 45;
@@ -121,5 +121,20 @@ test('embedded chapter changes refresh system metadata while retaining the book 
   await settle(player);
   assert.equal(mediaSession.metadata.title, 'The Book');
   assert.equal(mediaSession.metadata.album, 'Into the woods');
-  assert.equal(mediaSession.position.position, 45);
+  assert.deepEqual(mediaSession.position, {duration: 60, position: 5, playbackRate: 1});
+  await action('seekto', {seekTime: 15});
+  assert.equal(player.position, 55);
+  assert.equal(writes.filter(w => w.store === 'progress').at(-1).value.elapsed, 155);
+  await action('seekto', {seekTime: 60});
+  assert.ok(Math.abs(player.position - 99.95) < 1e-9);
+  assert.equal(player.index, 1);
+  player.audio.currentTime = 39.99;
+  player.audio.dispatchEvent(new Event('timeupdate'));
+  await settle(player);
+  assert.equal(mediaSession.metadata.album, 'Opening');
+  player.audio.currentTime = 40;
+  player.audio.dispatchEvent(new Event('timeupdate'));
+  await settle(player);
+  assert.equal(mediaSession.metadata.album, 'Into the woods');
+  assert.deepEqual(mediaSession.position, {duration: 60, position: 0, playbackRate: 1});
 });
