@@ -50,6 +50,14 @@ Connect your iPhone to CarPlay, start a book in Folio on the phone, then open **
 
 Folio supplies the book title, author, cover, current chapter position and duration, and media controls to iOS. The Now Playing timeline seeks within the current chapter, including embedded chapters. Play/pause, back 15 seconds, forward 30 seconds, previous/next chapter, and scrubbing are available where iOS and your vehicle expose them. The visible buttons and background playback behavior depend on the browser, iOS, and vehicle; verify operation while parked. Folio has no dedicated CarPlay icon or dashboard library browser. [Apple describes the shared Now Playing experience](https://developer.apple.com/videos/play/wwdc2017/719/).
 
+## Read along
+
+Folio reads timed LRC transcripts supplied by a Plex music library. Put a UTF-8 `.lrc` file beside its matching audio file (for example, `Chapter One.m4b` and `Chapter One.lrc`), then refresh the album’s metadata in Plex. Open **Now playing → Read along** in Folio. Use **Refresh** there after adding or changing a transcript.
+
+The active line follows playback, seeking, and chapter changes. Tap a line to seek to it; scroll to browse, then choose **Follow playback** to resume automatic scrolling. Enhanced LRC files with word timestamps also highlight individual words; ordinary LRC highlights timed lines. Transcripts use the audio file’s clock even when that file contains embedded chapters.
+
+Viewed transcripts are cached locally, and book downloads fetch available transcripts before starting audio downloads. For books downloaded before this feature, open Read along while connected to cache a chapter’s transcript, or download the book again to collect its available transcripts. Removing an offline book also removes its cached transcripts. Folio does not upload audio or generate transcripts.
+
 ## Reading state and privacy
 
 Server connection details and access tokens stay in this browser's `localStorage`. Metadata, progress, bookmarks, listening history, download records, and pending sync work use IndexedDB; downloaded media uses Cache Storage. Requests go directly to your server; Plex sign-in also uses Plex’s authentication service. LibriVox searches use the LibriVox audio collection on Internet Archive, whose browser-compatible API supports partial titles and empty results. Selected books stream audio from Internet Archive. There is no Folio backend, account service, or analytics service, and no credential belongs in this repository or deployment configuration.

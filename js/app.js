@@ -2,6 +2,8 @@ import { ServerClient, providerName } from './servers.js';
 import { plexProgress } from './plex-progress.js';
 import { db } from './db.js';
 import { DownloadManager } from './downloads.js';
+import { TranscriptManager } from './transcripts.js';
+import { ReadAlongView } from './read-along.js';
 import { Player } from './player.js';
 import { librivoxServer, librivoxLibrary } from './librivox.js';
 import { retireAutomaticCatalog } from './librivox-catalog.js';
@@ -46,7 +48,8 @@ const plex = {
   artworkURL:(server,book)=>plexAPI.artworkURL(server,book)
 };
 const getServer = id => id === librivoxServer.id ? librivoxServer : config.servers.find(s => s.id === id);
-const downloads = new DownloadManager({getServer, plex});
+const transcripts = new TranscriptManager({plex:plexAPI, getServer});
+const downloads = new DownloadManager({getServer, plex, transcripts});
 let books = [], progress = new Map(), downloadRecords = new Map(), bookmarks = [], history = [], settings = {}, reading = [], queue = [];
 let view = location.hash.slice(1) || 'library', query = '', filter = 'all', sort = 'title', group = null, detailBook = null;
 let syncing = false, refreshBusy = false, pinTimer, workerRegistration;
@@ -57,6 +60,7 @@ const labels = {library:'Library',continue:'Continue listening',downloads:'Downl
 if (!labels[view]) view = 'library';
 const workerReady = prepareWorker();
 const player = new Player({plex, downloads, getServer, artworkURL: cover, settings});
+const readAlong = new ReadAlongView({player, transcripts, onError:error=>toast(error.message,true)});
 
 document.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = I(el.dataset.icon));
 document.querySelectorAll('.transport [data-act=back] small,.transport [data-act=forward] small').forEach(el=>el.remove());
@@ -223,6 +227,7 @@ function render() {
 }
 function navigate(target) { shelfLimit=60; view = labels[target] ? target : 'library'; group = null; filter = 'all'; query = ''; $('#search').value = ''; location.hash = view; document.body.classList.remove('nav-open'); render(); window.scrollTo(0,0); }
 function showModal(title, html, className = '') {
+  readAlong.unmount();
   modalVersion++;
   resetBookSheet();
   modal.className = `modal ${className}`;
@@ -372,7 +377,9 @@ function showNowPlaying() {
   if (!player.book) { toast('Choose a book to start listening.'); return; }
   const b = player.book;
   const chapter = playbackChapter(b,player.index,player.position);
-  showModal('Now playing', `${image(b,'now-cover')}<div class="now-text"><p class="eyebrow">A LITTLE MORE LOST IN THE STORY</p><h3>${e(b.title)}</h3><p>${e(b.author)}</p><small id="now-chapter"></small></div><div class="now-controls"><div class="scrubber"><span id="now-time">0:00</span><input type="range" id="now-seek" min="0" max="${chapter.duration}" value="${chapter.elapsed}" step=".1" aria-label="Chapter playback position"><span id="now-duration">${clock(chapter.duration)}</span></div><div class="transport"><button class="icon-button" data-act="prev-chapter" aria-label="Previous chapter">${I('previous')}</button><button class="icon-button" data-act="back" aria-label="Rewind 15 seconds">${I('back')}</button><button class="play-button" data-act="toggle" id="now-play" aria-label="Play">${I('play')}</button><button class="icon-button" data-act="forward" aria-label="Forward 30 seconds">${I('forward')}</button><button class="icon-button" data-act="next-chapter" aria-label="Next chapter">${I('next')}</button></div><div class="now-tools"><button data-act="speed">${I('volume')}<span id="now-speed">${player.speed}× speed</span></button><button data-act="sleep">${I('moon')}<span id="now-sleep">Sleep timer</span></button><button data-act="add-bookmark">${I('bookmark')}Bookmark</button><button data-act="queue-view">${I('queue')}Up next</button></div><div class="now-tools"><button data-act="detail" data-id="${e(b.id)}">Chapters & notes ↗</button><small id="now-offline" class="text-button"></small></div></div>`, 'player-modal');
+  const supportsReadAlong = providerName(getServer(b.serverId)) === 'Plex';
+  showModal('Now playing', `<div class="now-artwork">${image(b,'now-cover')}</div><div class="now-text"><p class="eyebrow">A LITTLE MORE LOST IN THE STORY</p><h3 id="now-title">${e(b.title)}</h3><p id="now-author">${e(b.author)}</p><small id="now-chapter"></small></div>${supportsReadAlong ? '<section id="read-along" class="read-along" hidden aria-label="Read along"></section>' : ''}<div class="now-controls"><div class="scrubber"><span id="now-time">0:00</span><input type="range" id="now-seek" min="0" max="${chapter.duration}" value="${chapter.elapsed}" step=".1" aria-label="Chapter playback position"><span id="now-duration">${clock(chapter.duration)}</span></div><div class="transport"><button class="icon-button" data-act="prev-chapter" aria-label="Previous chapter">${I('previous')}</button><button class="icon-button" data-act="back" aria-label="Rewind 15 seconds">${I('back')}</button><button class="play-button" data-act="toggle" id="now-play" aria-label="Play">${I('play')}</button><button class="icon-button" data-act="forward" aria-label="Forward 30 seconds">${I('forward')}</button><button class="icon-button" data-act="next-chapter" aria-label="Next chapter">${I('next')}</button></div><div class="now-tools"><button data-act="speed">${I('volume')}<span id="now-speed">${player.speed}× speed</span></button><button data-act="sleep">${I('moon')}<span id="now-sleep">Sleep timer</span></button><button data-act="add-bookmark">${I('bookmark')}Bookmark</button><button data-act="queue-view">${I('queue')}Up next</button></div><div class="now-tools">${supportsReadAlong ? '<button id="read-along-toggle" data-act="read-along" aria-pressed="false">Read along</button>' : ''}<button data-act="detail" data-id="${e(b.id)}">Chapters & notes ↗</button><small id="now-offline" class="text-button"></small></div></div>`, 'player-modal');
+  readAlong.mount($('#read-along'), {dialog:modal, artwork:$('.now-artwork',modal), toggle:$('#read-along-toggle'), visible:settings.readAlong === true});
   updatePlayer();
 }
 function updatePlayer() {
@@ -691,6 +698,7 @@ document.addEventListener('click',async event=>{
       case 'prev-chapter':await player.chapter(-1);break;
       case 'next-chapter':await player.chapter(1);break;
       case 'now-playing':showNowPlaying();break;
+      case 'read-along':settings.readAlong=!settings.readAlong;readAlong.setVisible(settings.readAlong);await saveSettings();break;
       case 'speed':showSpeed();break;
       case 'set-speed':player.setSpeed(Number(value));showSpeed();break;
       case 'sleep':showSleep();break;
@@ -778,7 +786,7 @@ document.addEventListener('change',async event=>{
   }catch(error){toast(error.message,true);}
 });
 $('#search').addEventListener('input',event=>{shelfLimit=60;query=event.target.value;render();});
-modal.addEventListener('close',()=>{modalVersion++;});
+modal.addEventListener('close',()=>{modalVersion++;readAlong.unmount();});
 modal.addEventListener('click',event=>{if(event.target===modal){const rect=modal.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)modal.close();}});
 document.addEventListener('keydown',event=>{
   if(event.target.closest('input,textarea,select,[contenteditable]'))return;

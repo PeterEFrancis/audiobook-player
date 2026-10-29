@@ -46,7 +46,7 @@ export class PlexClient {
     return url.href;
   }
 
-  async _request(base, path, token, params, { signal, timeout = 20000, method = 'GET', empty = false } = {}) {
+  async _request(base, path, token, params, { signal, timeout = 20000, method = 'GET', empty = false, redirect = 'follow' } = {}) {
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
     if (signal?.aborted) abort();
@@ -54,7 +54,7 @@ export class PlexClient {
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
       const response = await fetch(this._url(base, path, token, params), {
-        method, headers: { Accept: 'application/json' }, signal: controller.signal,
+        method, headers: { Accept: 'application/json' }, signal: controller.signal, redirect,
         mode: 'cors', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer',
       });
       if (!response.ok) {
@@ -266,12 +266,97 @@ export class PlexClient {
           viewOffset: Math.min(duration || Infinity, Math.max(0, seconds(item.viewOffset) - partOffset)),
           viewCount: Number(item.viewCount) || 0, lastViewedAt: Number(item.lastViewedAt) || 0,
           chapters, partOffset, metadataDuration: total || duration,
+          partId: String(part.id || ''), lyrics: this._lyrics(server, part),
           durationEstimated: !Number(part.duration) && parts.length > 1,
         };
         partOffset += duration;
         return track;
       });
     });
+  }
+
+  _lyrics(server, part) {
+    const root = new URL(this._serverURL(server));
+    return array(part?.Stream).filter(stream => Number(stream.streamType) === 4).flatMap(stream => {
+      const id = String(stream.id || '');
+      const key = stream.key || (/^\d+$/.test(id) ? `/library/streams/${id}` : '');
+      if (!key) return [];
+      let url;
+      try { url = new URL(key, root); } catch { return []; }
+      if (url.origin !== root.origin || url.username || url.password) return [];
+      // Persist a server-relative descriptor, never an authenticated media URL.
+      for (const name of [...url.searchParams.keys()]) if (/^x-plex-token$/i.test(name)) url.searchParams.delete(name);
+      return [{ id, key: url.pathname + url.search, format: String(stream.format || stream.codec || '').toLowerCase(),
+        timed: stream.timed === true || stream.timed === 1 || stream.timed === '1', provider: String(stream.provider || '') }];
+    });
+  }
+
+  async transcript(server, track, { signal } = {}) {
+    if (!track?.ratingKey) return null;
+    // Read fresh metadata so old cached books can discover a newly added sidecar.
+    const data = await this._request(this._serverURL(server), `/library/metadata/${encodeURIComponent(track.ratingKey)}`, server.token, {}, { signal, timeout: 10000, redirect: 'error' });
+    const item = array(data.MediaContainer?.Metadata).find(item => String(item.ratingKey) === String(track.ratingKey));
+    if (!item) return null;
+    const media = array(item.Media);
+    const parts = media.flatMap(media => array(media.Part));
+    const partId = track.partId || String(track.key || '').match(/\/library\/parts\/(\d+)(?:\/|$)/)?.[1];
+    const defaultParts = array(media.find(media => array(media.Part).some(part => part.key))?.Part);
+    const part = parts.find(part => part.key === track.key || partId && String(part.id) === String(partId))
+      || (defaultParts.length === 1 && !(track.partOffset > 0) ? defaultParts[0] : null);
+    const streams = this._lyrics(server, part).filter(stream => stream.format === 'lrc' || stream.timed)
+      .sort((a, b) => Number(/local/i.test(b.provider)) - Number(/local/i.test(a.provider)) || Number(b.format === 'lrc') - Number(a.format === 'lrc'));
+    for (const stream of streams) {
+      const text = await this._transcriptText(server, stream.key, { signal });
+      // Lyrics belong to their Media.Part, whose timestamps are file-relative.
+      if (text?.trim()) return { text, offset: 0, source: stream.key };
+    }
+    return null;
+  }
+
+  async _transcriptText(server, key, { signal } = {}) {
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal?.reason);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(() => controller.abort(), 15000);
+    const limit = 5 * 1024 * 1024;
+    try {
+      const response = await fetch(this._url(this._serverURL(server), key, server.token), {
+        headers: { Accept: 'application/x-lrc, text/plain;q=0.9, */*;q=0.1' }, signal: controller.signal,
+        mode: 'cors', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', redirect: 'error',
+      });
+      if (response.status === 404 || response.status === 204) return null;
+      if (response.status === 401 || response.status === 403) throw new PlexError('Plex denied access to this transcript. Reconnect the server in Settings.', response.status);
+      if (!response.ok) throw new PlexError(`Plex could not load the transcript (HTTP ${response.status}).`, response.status);
+      if (Number(response.headers.get('Content-Length')) > limit) { await response.body?.cancel(); throw new PlexError('This transcript is too large to read.'); }
+      if (/text\/html|application\/(?:json|xml)/i.test(response.headers.get('Content-Type') || '')) { await response.body?.cancel(); throw new PlexError('Plex did not return a timed lyrics file.'); }
+      const reader = response.body?.getReader();
+      if (!reader) {
+        const text = await response.text();
+        if (new TextEncoder().encode(text).byteLength > limit) throw new PlexError('This transcript is too large to read.');
+        return text;
+      }
+      const decoder = new TextDecoder();
+      let size = 0, text = '';
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > limit) { await reader.cancel(); throw new PlexError('This transcript is too large to read.'); }
+          text += decoder.decode(value, { stream: true });
+        }
+        return text + decoder.decode();
+      } finally { reader.releaseLock(); }
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason || new DOMException('Request canceled', 'AbortError');
+      if (error instanceof PlexError) throw error;
+      if (controller.signal.aborted) throw new PlexError('Plex took too long to return this transcript. Try again.');
+      throw new PlexError('Could not load the transcript from Plex. Check the server connection and browser access.');
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    }
   }
 
   mediaURL(server, track) {

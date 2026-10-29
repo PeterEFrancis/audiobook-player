@@ -1,10 +1,10 @@
 importScripts('js/background-downloads-sw.js');
-const SHELL_CACHE = 'folio-shell-v61';
+const SHELL_CACHE = 'folio-shell-v63';
 const MEDIA_CACHE = 'folio-media-v1';
 const ROOT = new URL(self.registration.scope);
 const SHELL = [
   './', 'index.html', 'app.html', 'css/app.css', 'css/landing.css', 'css/dark.css', 'js/theme.js',
-  'js/app.js', 'js/portrait.js', 'js/book-sheet.js', 'js/player.js', 'js/plex.js', 'js/db.js', 'js/downloads.js',
+  'js/app.js', 'js/lrc.js', 'js/transcripts.js', 'js/read-along.js', 'css/read-along.css', 'js/portrait.js', 'js/book-sheet.js', 'js/player.js', 'js/plex.js', 'js/db.js', 'js/downloads.js',
   'js/librivox.js', 'js/librivox-catalog.js', 'js/sample-migration.js', 'js/install.js', 'js/utils.js', 'js/plex-progress.js', 'js/servers.js', 'js/server-http.js', 'js/audiobookshelf.js', 'js/jellyfin.js', 'js/background-downloads-sw.js', 'manifest.webmanifest',
   'assets/icon.svg', 'assets/icon-192.png', 'assets/icon-512.png', 'assets/icon-maskable.png',
   'assets/cover-walden.svg', 'assets/cover-sea.svg', 'assets/cover-pride.svg',

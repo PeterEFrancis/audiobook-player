@@ -31,6 +31,7 @@ export class ServerClient {
   libraryProgress(server, ...args) { return this.client(server).libraryProgress(server, ...args); }
   bookProgress(server, ...args) { return this.client(server).bookProgress(server, ...args); }
   tracks(server, ...args) { return this.client(server).tracks(server, ...args); }
+  transcript(server, ...args) { return this.client(server).transcript?.(server, ...args) ?? Promise.resolve(null); }
   mediaURL(server, ...args) { return this.client(server).mediaURL(server, ...args); }
   downloadURL(server, ...args) { const client = this.client(server); return (client.downloadURL || client.mediaURL).call(client, server, ...args); }
   artworkURL(server, ...args) { return this.client(server).artworkURL(server, ...args); }

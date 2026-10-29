@@ -7,10 +7,11 @@ const isComplete = response => response?.headers.get('X-Folio-Complete') === '1'
 const abortError = () => new DOMException('Download paused.', 'AbortError');
 
 export class DownloadManager extends EventTarget {
-  constructor({ getServer, plex }) {
+  constructor({ getServer, plex, transcripts }) {
     super();
     this.getServer = getServer;
     this.plex = plex;
+    this.transcripts = transcripts;
     this.jobs = new Map();
     this.backgrounds = new Map();
     this.backgroundAvailable = 'BackgroundFetchManager' in globalThis;
@@ -183,6 +184,8 @@ export class DownloadManager extends EventTarget {
       await db.put('books', book);
       await this._save(record);
       job.started = true;
+      await this.transcripts?.download(book, { signal: job.controller.signal });
+      if (job.controller.signal.aborted) throw abortError();
       if (await this._startBackground(job, record)) {
         this.jobs.delete(key); job.finish();
         void this._pump();
@@ -454,6 +457,8 @@ export class DownloadManager extends EventTarget {
     for (const request of await cache.keys()) {
       if (request.url.startsWith(prefix) || request.url === this.artworkURL(bookId)) await cache.delete(request);
     }
+    const book = await db.get('books', bookId);
+    if (book) await this.transcripts?.remove(book);
     await db.delete('downloads', bookId);
     this.dispatchEvent(new CustomEvent('change', { detail: { record: { id: bookId, bookId, status: 'removed' } } }));
   }
