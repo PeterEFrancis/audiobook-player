@@ -9,6 +9,8 @@ export class Player extends EventTarget {
     this.audio = new Audio();
     this.audio.preload = 'metadata';
     this.audio.crossOrigin = 'anonymous';
+    this.traceStarted = Date.now();
+    this.playbackEvents = [];
     this.index = 0;
     this.lastSave = 0;
     this.lastTick = Date.now();
@@ -31,7 +33,10 @@ export class Player extends EventTarget {
     };
     this.audio.addEventListener('loadedmetadata', metadata);
     this.audio.addEventListener('durationchange', metadata);
-    this.audio.addEventListener('timeupdate', () => this.tick());
+    this.audio.addEventListener('timeupdate', () => {
+      this.tick();
+      if (Date.now() - (this.lastTrace || 0) >= 10000) { this.lastTrace = Date.now(); this.tracePlayback('timeupdate'); }
+    });
     this.audio.addEventListener('playing', () => {
       this.accountListening();
       this.listening = true;
@@ -56,9 +61,12 @@ export class Player extends EventTarget {
       if (this.audio.error) this.error(new Error(navigator.onLine ? 'This audio could not be played. Check the server connection and that your browser supports its format (MP3, AAC, or M4B/AAC).' : 'This track is not available offline. Download the complete book before disconnecting.'));
     });
     this.audio.addEventListener('waiting', () => { this.accountListening(); this.listening = false; this.emit(); });
+    for (const event of ['play', 'playing', 'pause', 'waiting', 'stalled', 'error', 'loadedmetadata', 'seeking', 'seeked', 'emptied']) {
+      this.audio.addEventListener(event, () => this.tracePlayback(event));
+    }
     this.timer = setInterval(() => this.checkSleep(), 500);
     this.setupMediaSession();
-    document.addEventListener('visibilitychange', () => { if (document.hidden) this.persist().catch(() => {}); });
+    document.addEventListener('visibilitychange', () => { this.tracePlayback('visibility'); if (document.hidden) this.persist().catch(() => {}); });
     window.addEventListener('pagehide', () => this.persist().catch(() => {}));
   }
   get track() { return this.book?.tracks?.[this.index]; }
@@ -88,7 +96,44 @@ export class Player extends EventTarget {
       try { session.setPositionState?.(); } catch {}
     }
   }
-  error(error) { this.dispatchEvent(new CustomEvent('error', {detail: error})); }
+  error(error) { this.tracePlayback('error', error); this.dispatchEvent(new CustomEvent('error', {detail: error})); }
+  playbackSnapshot() {
+    let audioSession = null;
+    try { if (navigator.audioSession) audioSession = {type: navigator.audioSession.type, state: navigator.audioSession.state || null}; } catch {}
+    const number = value => Number.isFinite(value) ? value : null;
+    return {
+      hidden: !!document.hidden, sourcePresent: !!(this.audio.currentSrc || this.audio.src),
+      paused: this.audio.paused, ended: !!this.audio.ended, muted: !!this.audio.muted,
+      position: number(this.position), mediaTime: number(this.audio.currentTime), duration: number(this.audio.duration),
+      volume: number(this.audio.volume), rate: number(this.speed), readyState: this.audio.readyState, networkState: this.audio.networkState,
+      mediaError: this.audio.error?.code || null, context: this.context?.state || null,
+      mediaSession: navigator.mediaSession?.playbackState || null, audioSession,
+    };
+  }
+  tracePlayback(event, error) {
+    const knownErrors = ['Error', 'TypeError', 'NotAllowedError', 'AbortError', 'NotSupportedError', 'InvalidStateError', 'NetworkError', 'SecurityError'];
+    const entry = {at: Math.max(0, Date.now() - this.traceStarted), event, ...this.playbackSnapshot()};
+    if (error) entry.error = knownErrors.includes(error.name) ? error.name : 'Error';
+    this.playbackEvents.push(entry);
+    if (this.playbackEvents.length > 40) this.playbackEvents.shift();
+  }
+  diagnostics() {
+    return {build: 'folio-audio-69', nativeAudioOnly: this.nativeAudioOnly, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
+  }
+  async reloadAudio() {
+    if (!this.book || !this.audio.src) return;
+    const position = this.position, rate = this.speed, volume = this.audio.volume;
+    this.tracePlayback('reload');
+    this.pendingSeek = position;
+    this.switching = true;
+    try { this.audio.load(); } finally { this.switching = false; }
+    this.audio.playbackRate = rate;
+    this.audio.volume = volume;
+    this.sleepStopped = false;
+    this.pausedAt = 0;
+    await this.startAudio();
+    await this.persist();
+  }
   applyPendingSeek() {
     if (this.pendingSeek == null || !Number.isFinite(this.audio.duration) || this.audio.duration <= 0 || this.audio.readyState < 1) return;
     this.audio.currentTime = Math.min(this.pendingSeek, Math.max(0, this.audio.duration - 0.05));
@@ -206,7 +251,11 @@ export class Player extends EventTarget {
     try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch {}
     // Keep play in the system-control event's task. A locked iPhone can leave
     // sound processing suspended/interrupted with a resume promise that stalls.
-    const playing = this.audio.play();
+    this.tracePlayback('play-request');
+    let playing;
+    try { playing = this.audio.play(); }
+    catch (error) { this.tracePlayback('play-rejected', error); throw error; }
+    void Promise.resolve(playing).then(() => this.tracePlayback('play-resolved'), error => this.tracePlayback('play-rejected', error));
     if (['suspended', 'interrupted'].includes(this.context?.state)) {
       try { void Promise.resolve(this.context.resume()).catch(error => this.error(error)); }
       catch (error) { this.error(error); }
@@ -355,6 +404,7 @@ export class Player extends EventTarget {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) throw new Error('Audio equalization is unavailable in this browser.');
       this.context = new AudioContext();
+      this.context.addEventListener?.('statechange', () => this.tracePlayback('context-state'));
       const source = this.context.createMediaElementSource(this.audio);
       this.bass = this.context.createBiquadFilter(); this.bass.type = 'lowshelf'; this.bass.frequency.value = 250;
       this.treble = this.context.createBiquadFilter(); this.treble.type = 'highshelf'; this.treble.frequency.value = 3000;
@@ -397,6 +447,7 @@ export class Player extends EventTarget {
     for (const [action, handler] of Object.entries(actions)) {
       try {
         navigator.mediaSession.setActionHandler(action, details => {
+          this.tracePlayback(`remote:${action}`);
           try { return Promise.resolve(handler(details || {})).catch(error => this.error(error)); }
           catch (error) { this.error(error); }
         });
