@@ -4,10 +4,10 @@ import { Player } from '../js/player.js';
 import { db } from '../js/db.js';
 
 class FakeAudio extends EventTarget {
-  constructor() { super(); this.paused = true; this.currentTime = 0; this.duration = NaN; this.readyState = 0; this.playbackRate = 1; }
+  constructor() { super(); this.paused = true; this.currentTime = 0; this.duration = NaN; this.readyState = 0; this.playbackRate = 1; this.playCalls = 0; }
   set src(value) { this._src = this.currentSrc = value; this.currentTime = 0; this.duration = NaN; this.readyState = 0; this.ended = false; }
   get src() { return this._src; }
-  async play() { if (this.failure) throw this.failure; this.paused = false; this.ended = false; this.dispatchEvent(new Event('playing')); }
+  async play() { this.playCalls++; if (this.failure) throw this.failure; this.paused = false; this.ended = false; this.dispatchEvent(new Event('playing')); }
   pause() { const active = !this.paused; this.paused = true; if (active) this.dispatchEvent(new Event('pause')); }
   metadata() { this.duration = 100; this.readyState = 1; this.dispatchEvent(new Event('loadedmetadata')); }
 }
@@ -137,4 +137,84 @@ test('embedded chapter changes reset system time and map chapter seeks to absolu
   await settle(player);
   assert.equal(mediaSession.metadata.album, 'Into the woods');
   assert.deepEqual(mediaSession.position, {duration: 60, position: 0, playbackRate: 1});
+});
+
+test('locked system play starts the same audio synchronously while its sound context resumes', async t => {
+  for (const state of ['suspended', 'interrupted']) await t.test(state, async t => {
+    const { player, handlers, mediaSession } = setup(t);
+    const hidden = document.hidden;
+    document.hidden = true;
+    t.after(() => { document.hidden = hidden; });
+    await player.open(book(), { autoplay: false });
+    player.audio.metadata();
+    await player.play();
+    player.audio.currentTime = 55;
+    player.audio.pause();
+    await settle(player);
+    const audio = player.audio, source = audio.src, calls = audio.playCalls;
+    let release, playing, resumeCalls = 0;
+    const pendingContext = new Promise(resolve => { release = resolve; });
+    t.after(async () => { release(); await playing; await settle(player); });
+    player.context = { state, resume() { resumeCalls++; return pendingContext; } };
+
+    playing = handlers.get('play')({});
+    assert.equal(audio.playCalls, calls + 1);
+    assert.equal(audio.paused, false);
+    assert.equal(player.audio, audio);
+    assert.equal(audio.src, source);
+    assert.equal(player.position, 55);
+    assert.equal(mediaSession.playbackState, 'playing');
+    assert.equal(resumeCalls, 1);
+    release();
+    await playing;
+    await settle(player);
+  });
+});
+
+test('locked pause then play does not wait for pending checkpoint storage', async t => {
+  const { player, handlers, mediaSession, writes } = setup(t);
+  const hidden = document.hidden;
+  document.hidden = true;
+  t.after(() => { document.hidden = hidden; });
+  const selected = book();
+  selected.serverId = 'plex';
+  await player.open(selected, { autoplay: false });
+  player.audio.metadata();
+  await player.play();
+  player.setSpeed(1.5);
+  await settle(player);
+  const audio = player.audio, source = audio.src, calls = audio.playCalls;
+  const put = db.put;
+  let release;
+  const pendingStorage = new Promise(resolve => { release = resolve; });
+  t.after(release);
+  db.put = async (...args) => { await pendingStorage; return put(...args); };
+
+  const pausing = handlers.get('pause')({});
+  assert.equal(audio.paused, true);
+  const playing = handlers.get('play')({});
+  assert.equal(audio.playCalls, calls + 1);
+  assert.equal(audio.paused, false);
+  assert.equal(player.audio, audio);
+  assert.equal(audio.src, source);
+  assert.equal(audio.playbackRate, 1.5);
+  assert.equal(mediaSession.playbackState, 'playing');
+  release();
+  await Promise.all([pausing, playing]);
+  await settle(player);
+  assert.equal(writes.filter(row => row.store === 'sync').at(-1).value.state, 'playing');
+});
+
+test('a rejected interrupted-context resume is reported without blocking system play', async t => {
+  const { player, handlers, errors } = setup(t);
+  await player.open(book(), { autoplay: false });
+  player.audio.metadata();
+  const failure = new Error('Sound context remains interrupted');
+  player.context = { state: 'interrupted', resume: () => Promise.reject(failure) };
+
+  const playing = handlers.get('play')({});
+  assert.equal(player.audio.paused, false);
+  await playing;
+  await settle(player);
+  assert.ok(errors.includes(failure));
 });

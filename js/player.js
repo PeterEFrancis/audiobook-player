@@ -195,16 +195,26 @@ export class Player extends EventTarget {
     this.audio.playbackRate = rate;
     this.audio.volume = volume;
     // Keep the same media element and start in the ended event's task, before any await.
-    const playing = this.audio.play();
-    if (this.context?.state === 'suspended') void this.context.resume().catch(error => this.error(error));
+    const playing = this.startAudio();
     this.emit();
     void this.prepareNext();
     void this.persist().catch(error => this.error(error));
     return playing;
   }
+  startAudio() {
+    try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch {}
+    // Keep play in the system-control event's task. A locked iPhone can leave
+    // sound processing suspended/interrupted with a resume promise that stalls.
+    const playing = this.audio.play();
+    if (['suspended', 'interrupted'].includes(this.context?.state)) {
+      try { void Promise.resolve(this.context.resume()).catch(error => this.error(error)); }
+      catch (error) { this.error(error); }
+    }
+    return playing;
+  }
   async play() {
     if (!this.book) return;
-    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
+    try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch {}
     this.sleepStopped = false;
     if (this.pendingSeek == null && (this.completed || this.audio.ended)) {
       const index = !this.completed && this.index < this.book.tracks.length - 1 ? this.index + 1 : 0;
@@ -219,8 +229,7 @@ export class Player extends EventTarget {
     if (!this.context && (this.sound?.voiceBoost || this.sound?.bass || this.sound?.treble)) {
       try { this.configureSound(this.sound); } catch (error) { this.error(error); }
     }
-    if (this.context?.state === 'suspended') await this.context.resume();
-    await this.audio.play();
+    await this.startAudio();
     await this.persist();
   }
   async toggle() { if (this.playing) this.audio.pause(); else await this.play(); }
