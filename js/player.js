@@ -20,9 +20,10 @@ export class Player extends EventTarget {
     this.listening = false;
     this.progressChanged = false;
     this.playbackStarted = false;
+    this.mediaReleased = false;
     this.saves = Promise.resolve();
     const metadata = () => {
-      if (!this.book || this.switching || (this.audio.currentSrc && this.audio.currentSrc !== this.activeSource)) return;
+      if (!this.book || this.mediaReleased || this.switching || (this.audio.currentSrc && this.audio.currentSrc !== this.activeSource)) return;
       const t = this.track;
       if (Number.isFinite(this.audio.duration) && this.audio.duration > 0) {
         t.duration = this.audio.duration;
@@ -38,6 +39,7 @@ export class Player extends EventTarget {
       if (Date.now() - (this.lastTrace || 0) >= 10000) { this.lastTrace = Date.now(); this.tracePlayback('timeupdate'); }
     });
     this.audio.addEventListener('playing', () => {
+      if (this.mediaReleased) { this.audio.pause(); return; }
       this.accountListening();
       this.listening = true;
       this.playbackStarted = true;
@@ -81,8 +83,8 @@ export class Player extends EventTarget {
   updateMediaSession() {
     const session = navigator.mediaSession;
     if (!session) return;
-    try { session.playbackState = this.book ? this.playing && !this.audio.ended ? 'playing' : 'paused' : 'none'; } catch {}
-    if (!this.book) {
+    try { session.playbackState = this.book && !this.mediaReleased ? this.playing && !this.audio.ended ? 'playing' : 'paused' : 'none'; } catch {}
+    if (!this.book || this.mediaReleased) {
       this.mediaMetadataKey = null;
       try { session.metadata = null; session.setPositionState?.(); } catch {}
       return;
@@ -118,9 +120,34 @@ export class Player extends EventTarget {
     if (this.playbackEvents.length > 40) this.playbackEvents.shift();
   }
   diagnostics() {
-    return {build: 'folio-audio-71', nativeAudioOnly: this.nativeAudioOnly, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
+    return {build: 'folio-audio-72', nativeAudioOnly: this.nativeAudioOnly, mediaReleased: this.mediaReleased, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
+  }
+  releaseAudio() {
+    if (!this.book || this.mediaReleased) return this.saves;
+    const position = this.position, rate = this.speed, volume = this.audio.volume;
+    this.accountListening();
+    this.listening = false;
+    if (this.playbackStarted) this.progressChanged = true;
+    this.playbackStarted = false;
+    this.mediaReleased = true;
+    this.generation++;
+    this.nextSource = this.nextPreparation = null;
+    this.pendingSeek = position;
+    this.pausedAt = Date.now();
+    this.audio.pause();
+    // Snapshot the stopped checkpoint before unloading, without waiting on storage.
+    const saving = this.persist();
+    this.audio.removeAttribute('src');
+    this.audio.load();
+    this.audio.playbackRate = rate;
+    this.audio.volume = volume;
+    this.setupMediaSession();
+    this.emit();
+    this.tracePlayback('release');
+    return saving;
   }
   async reloadAudio() {
+    if (this.mediaReleased) { await this.play(); return; }
     if (!this.book || !this.audio.src) return;
     const position = this.position, rate = this.speed, volume = this.audio.volume;
     this.tracePlayback('reload');
@@ -178,6 +205,7 @@ export class Player extends EventTarget {
     this.book = book;
     this.index = index;
     this.pendingSeek = Math.max(0, Number(position) || 0);
+    this.mediaReleased = false;
     this.audio.src = source;
     this.activeSource = this.audio.src;
     this.audio.playbackRate = saved?.speed || this.settings.speed || 1;
@@ -219,6 +247,7 @@ export class Player extends EventTarget {
     return task.promise;
   }
   continuePlayback() {
+    if (this.mediaReleased) return Promise.resolve();
     const book = this.book, index = this.index + 1, track = book.tracks[index];
     const prepared = this.nextSource;
     const ready = prepared?.bookId === book.id && prepared.index === index && prepared.generation === this.generation;
@@ -248,6 +277,7 @@ export class Player extends EventTarget {
     return playing;
   }
   startAudio() {
+    if (this.mediaReleased) return Promise.resolve();
     try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch {}
     // Keep play in the system-control event's task. A locked iPhone can leave
     // sound processing suspended/interrupted with a resume promise that stalls.
@@ -264,6 +294,15 @@ export class Player extends EventTarget {
   }
   async play({system = false} = {}) {
     if (!this.book) return;
+    if (this.mediaReleased) {
+      if (system || document.hidden) return;
+      const rate = this.speed, volume = this.audio.volume;
+      this.mediaReleased = false;
+      this.audio.src = this.activeSource;
+      this.audio.playbackRate = rate;
+      this.audio.volume = volume;
+      void this.prepareNext();
+    }
     try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch {}
     this.sleepStopped = false;
     if (this.pendingSeek == null && (this.completed || this.audio.ended)) {
@@ -357,7 +396,7 @@ export class Player extends EventTarget {
     this.emit();
   }
   async ended() {
-    if (!this.book || this.switching || this.opening || this.pendingSeek != null || !this.audio.ended || this.completed) return;
+    if (!this.book || this.mediaReleased || this.switching || this.opening || this.pendingSeek != null || !this.audio.ended || this.completed) return;
     this.accountListening();
     this.listening = false;
     this.progressChanged = true;
@@ -427,7 +466,7 @@ export class Player extends EventTarget {
     if (activate) this.persist({preferencesOnly: true}).catch(e => this.error(e));
   }
   updateMetadata() {
-    if (!this.book || !this.track || !navigator.mediaSession || !window.MediaMetadata) return;
+    if (!this.book || this.mediaReleased || !this.track || !navigator.mediaSession || !window.MediaMetadata) return;
     const chapter = this.track.chapters?.findLast(chapter => (chapter.start || 0) <= this.position);
     const album = chapter?.title || this.track.title || this.book.title;
     const src = new URL(this.artworkURL(this.book) || './assets/icon-512.png', location.href).href;
@@ -440,7 +479,11 @@ export class Player extends EventTarget {
   }
   setupMediaSession() {
     if (!navigator.mediaSession) return;
-    const pause = async () => { this.audio.pause(); await this.persist(); this.emit(); };
+    const pause = async () => {
+      const standalone = navigator.standalone === true || window.matchMedia?.('(display-mode: standalone)').matches;
+      if (this.nativeAudioOnly && standalone && document.hidden) { await this.releaseAudio(); return; }
+      this.audio.pause(); await this.persist(); this.emit();
+    };
     const actions = {play: () => this.play({system: true}), pause, stop: pause, seekbackward: d => this.skip(-(d.seekOffset || 15)), seekforward: d => this.skip(d.seekOffset || 30), previoustrack: () => this.chapter(-1), nexttrack: () => this.chapter(1), seekto: d => {
       if (!this.book || !Number.isFinite(d.seekTime)) return;
       const chapter = playbackChapter(this.book, this.index, this.position);
@@ -450,7 +493,8 @@ export class Player extends EventTarget {
     }};
     for (const [action, handler] of Object.entries(actions)) {
       try {
-        navigator.mediaSession.setActionHandler(action, details => {
+        navigator.mediaSession.setActionHandler(action, this.mediaReleased ? null : details => {
+          if (this.mediaReleased) return;
           this.tracePlayback(`remote:${action}`);
           try { return Promise.resolve(handler(details || {})).catch(error => this.error(error)); }
           catch (error) { this.error(error); }
