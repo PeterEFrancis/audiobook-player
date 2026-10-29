@@ -118,7 +118,7 @@ export class Player extends EventTarget {
     if (this.playbackEvents.length > 40) this.playbackEvents.shift();
   }
   diagnostics() {
-    return {build: 'folio-audio-70', nativeAudioOnly: this.nativeAudioOnly, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
+    return {build: 'folio-audio-71', nativeAudioOnly: this.nativeAudioOnly, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
   }
   async reloadAudio() {
     if (!this.book || !this.audio.src) return;

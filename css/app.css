@@ -31,3 +31,5 @@
 .transport .icon-button:is([data-act=back],[data-act=forward]){padding:0}.transport .icon-button .skip-icon{width:28px;height:28px;flex-shrink:0}.now-controls .icon-button .skip-icon{width:34px;height:34px}
 
 .playback-help{border-top:1px solid var(--line);margin-top:12px;padding-top:6px}.playback-help .app-settings-actions{padding-top:6px}
+
+.playback-help [data-act=basic-audio-test]{grid-column:1/-1}

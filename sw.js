@@ -1,9 +1,9 @@
 importScripts('js/background-downloads-sw.js');
-const SHELL_CACHE = 'folio-shell-v70';
+const SHELL_CACHE = 'folio-shell-v71';
 const MEDIA_CACHE = 'folio-media-v1';
 const ROOT = new URL(self.registration.scope);
 const SHELL = [
-  './', 'index.html', 'app.html', 'css/app.css', 'css/landing.css', 'css/dark.css', 'js/theme.js',
+  './', 'index.html', 'app.html', 'audio-test.html', 'js/audio-test.js', 'css/app.css', 'css/landing.css', 'css/dark.css', 'js/theme.js',
   'js/app.js', 'js/lrc.js', 'js/transcripts.js', 'js/read-along.js', 'css/read-along.css', 'js/portrait.js', 'js/book-sheet.js', 'js/player.js', 'js/plex.js', 'js/db.js', 'js/downloads.js',
   'js/librivox.js', 'js/librivox-catalog.js', 'js/sample-migration.js', 'js/install.js', 'js/utils.js', 'js/plex-progress.js', 'js/servers.js', 'js/server-http.js', 'js/audiobookshelf.js', 'js/jellyfin.js', 'js/background-downloads-sw.js', 'manifest.webmanifest',
   'assets/icon.svg', 'assets/icon-192.png', 'assets/icon-512.png', 'assets/icon-maskable.png',
@@ -94,7 +94,7 @@ self.addEventListener('fetch', event => {
         const response = await fetch(request);
         if (response.ok) return response;
       } catch {}
-      const file = path === '' || path === 'index.html' ? 'index.html' : 'app.html';
+      const file = path === 'audio-test.html' ? 'audio-test.html' : path === '' || path === 'index.html' ? 'index.html' : 'app.html';
       return await caches.match(new URL(file, ROOT)) || new Response('Open Folio once while online to prepare it for offline use.', { status: 503 });
     })());
     return;

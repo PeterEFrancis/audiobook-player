@@ -52,7 +52,7 @@ test('playback diagnostics are bounded and exclude source addresses, book data, 
   for (let i = 0; i < 55; i++) player.tracePlayback('probe');
   player.tracePlayback('play-rejected', new DOMException('secret-token at private-server.test', 'NotAllowedError'));
   const report = player.diagnostics(), serialized = JSON.stringify(report);
-  assert.equal(report.build, 'folio-audio-70');
+  assert.equal(report.build, 'folio-audio-71');
   assert.equal(report.nativeAudioOnly, true);
   assert.ok(report.events.length > 0 && report.events.length <= 40);
   assert.equal(report.events.at(-1).event, 'play-rejected');
