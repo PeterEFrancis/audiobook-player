@@ -118,7 +118,7 @@ export class Player extends EventTarget {
     if (this.playbackEvents.length > 40) this.playbackEvents.shift();
   }
   diagnostics() {
-    return {build: 'folio-audio-69', nativeAudioOnly: this.nativeAudioOnly, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
+    return {build: 'folio-audio-70', nativeAudioOnly: this.nativeAudioOnly, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
   }
   async reloadAudio() {
     if (!this.book || !this.audio.src) return;
@@ -262,7 +262,7 @@ export class Player extends EventTarget {
     }
     return playing;
   }
-  async play() {
+  async play({system = false} = {}) {
     if (!this.book) return;
     try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch {}
     this.sleepStopped = false;
@@ -271,10 +271,14 @@ export class Player extends EventTarget {
       await this.open(this.book, {index, position: 0});
       return;
     }
+    const reload = system && this.nativeAudioOnly && this.audio.paused && this.pausedAt > 0;
     if (this.pausedAt && Date.now() - this.pausedAt > 30000 && this.settings.smartRewind !== false) {
       this.pendingSeek = Math.max(0, this.position - Number(this.settings.rewindSeconds || 10));
       this.applyPendingSeek();
     }
+    // iOS can resolve play() while its media clock remains frozen after a
+    // lock-screen pause. Reuse the confirmed manual recovery in this action's task.
+    if (reload) { await this.reloadAudio(); return; }
     this.pausedAt = 0;
     if (!this.context && (this.sound?.voiceBoost || this.sound?.bass || this.sound?.treble)) {
       try { this.configureSound(this.sound); } catch (error) { this.error(error); }
@@ -437,7 +441,7 @@ export class Player extends EventTarget {
   setupMediaSession() {
     if (!navigator.mediaSession) return;
     const pause = async () => { this.audio.pause(); await this.persist(); this.emit(); };
-    const actions = {play: () => this.play(), pause, stop: pause, seekbackward: d => this.skip(-(d.seekOffset || 15)), seekforward: d => this.skip(d.seekOffset || 30), previoustrack: () => this.chapter(-1), nexttrack: () => this.chapter(1), seekto: d => {
+    const actions = {play: () => this.play({system: true}), pause, stop: pause, seekbackward: d => this.skip(-(d.seekOffset || 15)), seekforward: d => this.skip(d.seekOffset || 30), previoustrack: () => this.chapter(-1), nexttrack: () => this.chapter(1), seekto: d => {
       if (!this.book || !Number.isFinite(d.seekTime)) return;
       const chapter = playbackChapter(this.book, this.index, this.position);
       if (!Number.isFinite(chapter.duration) || chapter.duration <= 0) return;

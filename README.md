@@ -46,6 +46,8 @@ Folio prepares the next audio source while a chapter is playing and starts it on
 
 On iPhone and iPad, playback uses the direct audio path, with voice boost and bass/treble processing disabled. Speed, volume, sleep timers, and system controls remain available. This bypasses a [reported WebKit issue where Web Audio can remain silent after resuming](https://bugs.webkit.org/show_bug.cgi?id=291892). After updating from an earlier build, close and reopen Folio to create a fresh audio element.
 
+On iOS, system Play after a pause reloads the current media file before resuming, retaining its position, playback speed, and volume. This also applies to CarPlay and headset Play commands. The recovery starts directly in the system action, without waiting for storage or a background timer.
+
 For silent playback, **Settings → Player settings → Playback help** offers **Reload audio**, which reloads the current file while retaining its position and speed. **Copy playback diagnostics** copies a bounded in-memory report of player state and recent playback events. It includes no server URLs, tokens, book titles, or transcript text and sends nothing automatically.
 
 ## CarPlay Now Playing

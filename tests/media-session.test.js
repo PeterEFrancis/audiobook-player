@@ -1,31 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { setMaxListeners } from 'node:events';
 import { Player } from '../js/player.js';
 import { db } from '../js/db.js';
 
 class FakeAudio extends EventTarget {
-  constructor() { super(); this.paused = true; this.currentTime = 0; this.duration = NaN; this.readyState = 0; this.playbackRate = 1; this.playCalls = 0; }
+  constructor() { super(); this.paused = true; this.currentTime = 0; this.duration = NaN; this.readyState = 0; this.playbackRate = 1; this.volume = 1; this.playCalls = 0; this.loadCalls = 0; }
   set src(value) { this._src = this.currentSrc = value; this.currentTime = 0; this.duration = NaN; this.readyState = 0; this.ended = false; }
   get src() { return this._src; }
   async play() { this.playCalls++; if (this.failure) throw this.failure; this.paused = false; this.ended = false; this.dispatchEvent(new Event('playing')); }
   pause() { const active = !this.paused; this.paused = true; if (active) this.dispatchEvent(new Event('pause')); }
+  load() { this.loadCalls++; this.currentTime = 0; this.duration = NaN; this.readyState = 0; this.playbackRate = 1; this.volume = 1; this.paused = true; this.dispatchEvent(new Event('emptied')); }
   metadata() { this.duration = 100; this.readyState = 1; this.dispatchEvent(new Event('loadedmetadata')); }
 }
 globalThis.Audio = FakeAudio;
 globalThis.document = new EventTarget();
 globalThis.window = new EventTarget();
+setMaxListeners(30, document, window);
 globalThis.MediaMetadata = window.MediaMetadata = class { constructor(data) { Object.assign(this, data); } };
 globalThis.location = { href: 'https://folio.test/app.html' };
 
 const book = () => ({ id: 'book', serverId: 'demo', title: 'The Book', author: 'The Author', tracks: [0, 1].map(n => ({ id: `track-${n}`, title: `Chapter ${n + 1}`, duration: 100, key: `/audio/${n}` })) });
 const settle = async player => { await new Promise(resolve => setImmediate(resolve)); await player.saves; };
-function setup(t, unsupported) {
+function setup(t, unsupported, {ios = false} = {}) {
   const handlers = new Map(), writes = [], errors = [];
   const mediaSession = {
     setActionHandler(action, handler) { if (action === unsupported) throw new Error('Unsupported action'); handlers.set(action, handler); },
     setPositionState(state) { this.position = state; },
   };
-  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true, mediaSession, audioSession: {} } });
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true, mediaSession, audioSession: {}, userAgent: ios ? 'Mozilla/5.0 (iPhone)' : '' } });
   db.get = async () => ({ trackIndex: 1, position: 25 });
   db.put = async (store, value) => { writes.push({ store, value }); };
   const player = new Player({ plex: { mediaURL: (_server, track) => `https://server.test${track.key}` }, downloads: { hasTrack: async () => false }, getServer: () => ({}), artworkURL: () => '/cover.png' });
@@ -217,4 +220,121 @@ test('a rejected interrupted-context resume is reported without blocking system 
   await playing;
   await settle(player);
   assert.ok(errors.includes(failure));
+});
+
+
+test('iPhone system resume reloads the same file immediately without waiting for storage', async t => {
+  const { player, handlers, mediaSession, writes } = setup(t, undefined, {ios: true});
+  const hidden = document.hidden;
+  document.hidden = true;
+  t.after(() => { document.hidden = hidden; });
+  const selected = book(); selected.serverId = 'plex';
+  await player.open(selected, {autoplay: false});
+  player.audio.metadata();
+  await player.play();
+  player.audio.currentTime = 42.5;
+  player.setSpeed(1.5);
+  player.audio.volume = 0.4;
+  await settle(player);
+  const audio = player.audio, source = audio.src, calls = audio.playCalls;
+  const put = db.put;
+  let release;
+  const storage = new Promise(resolve => { release = resolve; });
+  t.after(release);
+  db.put = async (...args) => { await storage; return put(...args); };
+  const pausing = handlers.get('pause')({});
+  const playing = handlers.get('play')({});
+  assert.equal(player.nativeAudioOnly, true);
+  assert.equal(audio.loadCalls, 1);
+  assert.equal(audio.playCalls, calls + 1);
+  assert.equal(player.audio, audio);
+  assert.equal(audio.src, source);
+  assert.equal(player.position, 42.5);
+  assert.equal(audio.playbackRate, 1.5);
+  assert.equal(audio.volume, 0.4);
+  assert.equal(mediaSession.playbackState, 'playing');
+  audio.metadata();
+  assert.equal(audio.currentTime, 42.5);
+  release();
+  await Promise.all([pausing, playing]);
+  await settle(player);
+  assert.equal(writes.filter(row => row.store === 'sync').at(-1).value.state, 'playing');
+});
+
+test('iPhone system resume applies smart rewind before reloading the file', async t => {
+  const {player, handlers} = setup(t, undefined, {ios: true});
+  await player.open(book(), {autoplay: false});
+  player.audio.metadata();
+  await player.play();
+  player.audio.currentTime = 55;
+  player.audio.pause();
+  await settle(player);
+  player.pausedAt = Date.now() - 31000;
+  const playing = handlers.get('play')({});
+  assert.equal(player.audio.loadCalls, 1);
+  assert.equal(player.position, 45);
+  player.audio.metadata();
+  assert.equal(player.audio.currentTime, 45);
+  await playing;
+  await settle(player);
+});
+
+test('first iPhone play, foreground iPhone resume, and non-iPhone system resume avoid reload', async t => {
+  for (const ios of [true, false]) await t.test(ios ? 'iPhone' : 'other platforms', async t => {
+    const {player, handlers} = setup(t, undefined, {ios});
+    await player.open(book(), {autoplay: false});
+    player.audio.metadata();
+    await handlers.get('play')({});
+    await settle(player);
+    assert.equal(player.audio.loadCalls, 0);
+    player.audio.pause();
+    await settle(player);
+    await player.play();
+    await settle(player);
+    assert.equal(player.audio.loadCalls, 0);
+    if (!ios) {
+      player.audio.pause();
+      await settle(player);
+      await handlers.get('play')({});
+      await settle(player);
+      assert.equal(player.audio.loadCalls, 0);
+    }
+  });
+});
+
+test('duplicate system Play does not reload twice and a later Pause survives recovery completion', async t => {
+  const {player, handlers, mediaSession} = setup(t, undefined, {ios: true});
+  const hidden = document.hidden;
+  document.hidden = true;
+  t.after(() => { document.hidden = hidden; });
+  const selected = book(); selected.serverId = 'plex';
+  await player.open(selected, {autoplay: false});
+  player.audio.metadata();
+  await player.play();
+  player.audio.currentTime = 42;
+  player.audio.pause();
+  await settle(player);
+  let release;
+  const storage = new Promise(resolve => { release = resolve; });
+  t.after(release);
+  const put = db.put;
+  db.put = async (...args) => { await storage; return put(...args); };
+
+  const first = handlers.get('play')({});
+  const duplicate = handlers.get('play')({});
+  assert.equal(player.audio.loadCalls, 1);
+  assert.equal(player.pendingSeek, 42);
+  const pausing = handlers.get('pause')({});
+  assert.equal(player.audio.paused, true);
+  assert.equal(player.pendingSeek, 42);
+  player.audio.metadata();
+  assert.equal(player.audio.currentTime, 42);
+  assert.equal(player.audio.paused, true);
+  release();
+  await Promise.all([first, duplicate, pausing]);
+  await settle(player);
+  assert.equal(player.audio.loadCalls, 1);
+  assert.equal(player.position, 42);
+  assert.equal(player.audio.paused, true);
+  assert.equal(mediaSession.playbackState, 'paused');
 });
