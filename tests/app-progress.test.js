@@ -18,7 +18,7 @@ function setup(local) {
   const context = vm.createContext({
     structuredClone, plexProgress, sumDuration, books: [], progress: new Map(local ? [[book.id, structuredClone(local)]] : []),
     Date: {now: () => clock.value}, getServer: () => ({}), connectionStatus: () => {}, syncing: false, outgoingSyncError: '', view:'library', navigator: {onLine: true},
-    player: {book: null, playing: false, generation: 0}, stopCurrentBook: async () => {},
+    player: {book: null, playing: false, generation: 0}, stopCurrentBook: async () => {}, document: {hidden: false},
     modal: {classList: {contains: () => false}, close: () => {}},
     db: {
       get: async (store, id) => structuredClone(stores.get(store).get(id)),
@@ -83,6 +83,49 @@ test('background refresh leaves an actively playing book untouched', async () =>
   Object.assign(context.player, {book, playing: true});
   await context.loadLibrary(library);
   assert.deepEqual(saved(), local);
+});
+
+test('hidden refresh preserves the paused current media source and checkpoint', async () => {
+  const local = {id: book.id, elapsed: 175, dirty: false};
+  const {context, saved} = setup(local);
+  const audio = {src: 'https://server.test/current-file'};
+  Object.assign(context.player, {book, playing: false, audio});
+  context.document.hidden = true;
+  let stopped = 0;
+  context.stopCurrentBook = async () => { stopped++; audio.src = ''; context.player.book = null; };
+  await context.loadLibrary(library);
+  assert.equal(stopped, 0);
+  assert.equal(context.player.book, book);
+  assert.equal(audio.src, 'https://server.test/current-file');
+  assert.deepEqual(saved(), local);
+});
+
+test('a refresh becoming hidden while awaiting storage cannot replace the paused player', async () => {
+  const local = {id: book.id, elapsed: 175, dirty: false};
+  const {context, saved} = setup(local);
+  Object.assign(context.player, {book, playing: false});
+  let stopped = 0, release;
+  context.stopCurrentBook = async () => { stopped++; context.player.book = null; };
+  const get = context.db.get;
+  context.db.get = (store, id) => store === 'progress' && id === book.id
+    ? new Promise(resolve => { release = () => resolve(structuredClone(local)); }) : get(store, id);
+  const refreshing = context.applyRemoteProgress({...book, plexTracks: rows, plexProgressFetchedAt: 1000});
+  context.document.hidden = true;
+  release();
+  await refreshing;
+  assert.equal(stopped, 0);
+  assert.equal(context.player.book, book);
+  assert.deepEqual(saved(), local);
+});
+
+test('hidden refresh still imports progress for a different book', async () => {
+  const {context, saved} = setup({id: book.id, elapsed: 175, dirty: false});
+  const other = {id: 'another-book'};
+  Object.assign(context.player, {book: other, playing: false});
+  context.document.hidden = true;
+  await context.loadLibrary(library);
+  assert.equal(saved().elapsed, 0);
+  assert.equal(context.player.book, other);
 });
 
 test('cached snapshots older than a local checkpoint cannot rewind it', async () => {

@@ -318,7 +318,7 @@ async function fetchBookTracks(book) {
   await db.put('books',book);
 }
 async function applyRemoteProgress(book) {
-  if(book.demo || book.localProgress || !book.plexTracks?.length || player.book?.id===book.id&&player.playing)return;
+  if(book.demo || book.localProgress || !book.plexTracks?.length || player.book?.id===book.id&&(player.playing||globalThis.document?.hidden))return;
   const local=await db.get('progress',book.id)||progress.get(book.id);
   if(local?.dirty || await db.get('sync',book.id) || await db.get('sync',`mark:${book.id}`))return;
   // A cached server snapshot must not rewind a checkpoint just uploaded here.
@@ -327,7 +327,7 @@ async function applyRemoteProgress(book) {
   remote.source=getServer(book.serverId)?.provider || 'plex';
   if(local?.plexFingerprint===remote.plexFingerprint && local.trackIndex===remote.trackIndex && Math.abs(local.position-remote.position)<0.01 && local.completed===remote.completed && local.duration===remote.duration)return;
   const p={...local,...remote,plexObservedAt:book.plexProgressFetchedAt};
-  if(player.book?.id===book.id&&player.playing || progress.get(book.id)?.dirty)return;
+  if(player.book?.id===book.id&&(player.playing||globalThis.document?.hidden) || progress.get(book.id)?.dirty)return;
   const wasCurrent=player.book?.id===book.id;
   await stopCurrentBook(book.id,false);
   const generation=player.generation;
@@ -415,7 +415,7 @@ async function seekChapter(el, seconds) {
 }
 function showSpeed() {
   if (!player.book) return toast('Start a book to adjust its playback.');
-  showModal('At your own pace', `<p class="lead">Speed and sound settings are remembered for this book.</p><div class="speed-options">${[.5,.75,1,1.1,1.25,1.5,1.75,2,2.5,3].map(n => `<button class="${player.speed === n ? 'active' : ''}" data-act="set-speed" data-value="${n}">${n}×</button>`).join('')}</div><label class="setting-line">Voice boost<input type="checkbox" id="voice-boost" ${player.sound?.voiceBoost ? 'checked' : ''}></label><label class="sound-control">Warmth · bass<input type="range" id="sound-bass" min="-10" max="10" step="1" value="${player.sound?.bass || 0}" aria-label="Bass gain"></label><label class="sound-control">Clarity · treble<input type="range" id="sound-treble" min="-10" max="10" step="1" value="${player.sound?.treble || 0}" aria-label="Treble gain"></label><label class="sound-control">Volume<input type="range" id="volume" min="0" max="1" step=".05" value="${settings.volume ?? 1}"></label><p>Sound processing requires your server to allow browser audio access.</p><div class="modal-actions"><button class="button" data-act="now-playing">Back to your book</button></div>`);
+  showModal('At your own pace', `<p class="lead">Speed and sound settings are remembered for this book.</p><div class="speed-options">${[.5,.75,1,1.1,1.25,1.5,1.75,2,2.5,3].map(n => `<button class="${player.speed === n ? 'active' : ''}" data-act="set-speed" data-value="${n}">${n}×</button>`).join('')}</div>${player.nativeAudioOnly ? '' : `<label class="setting-line">Voice boost<input type="checkbox" id="voice-boost" ${player.sound?.voiceBoost ? 'checked' : ''}></label><label class="sound-control">Warmth · bass<input type="range" id="sound-bass" min="-10" max="10" step="1" value="${player.sound?.bass || 0}" aria-label="Bass gain"></label><label class="sound-control">Clarity · treble<input type="range" id="sound-treble" min="-10" max="10" step="1" value="${player.sound?.treble || 0}" aria-label="Treble gain"></label>`}<label class="sound-control">Volume<input type="range" id="volume" min="0" max="1" step=".05" value="${settings.volume ?? 1}"></label>${player.nativeAudioOnly ? '' : '<p>Sound processing requires your server to allow browser audio access.</p>'}<div class="modal-actions"><button class="button" data-act="now-playing">Back to your book</button></div>`);
 }
 function showSleep() {
   if (!player.book) return toast('Choose a book before setting a sleep timer.');

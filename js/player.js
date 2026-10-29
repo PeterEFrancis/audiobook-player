@@ -5,6 +5,7 @@ export class Player extends EventTarget {
   constructor({plex, downloads, getServer, artworkURL, settings = {}}) {
     super();
     Object.assign(this, {plex, downloads, getServer, artworkURL, settings});
+    this.nativeAudioOnly = /iPhone|iPad|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     this.audio = new Audio();
     this.audio.preload = 'metadata';
     this.audio.crossOrigin = 'anonymous';
@@ -342,6 +343,13 @@ export class Player extends EventTarget {
     }
   }
   configureSound(options = {}, activate = true) {
+    // iOS can keep a resumed Web Audio graph silent. Never route its media
+    // element through that graph; disconnecting it later cannot restore output.
+    if (this.nativeAudioOnly) {
+      this.sound = {voiceBoost: false, bass: 0, treble: 0};
+      if (activate) this.persist({preferencesOnly: true}).catch(e => this.error(e));
+      return;
+    }
     this.sound = {voiceBoost: !!options.voiceBoost, bass: Number(options.bass || 0), treble: Number(options.treble || 0)};
     if (!this.context && activate) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;

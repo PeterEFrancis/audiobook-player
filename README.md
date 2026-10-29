@@ -44,6 +44,8 @@ Check the download's complete status before disconnecting. Storage estimates and
 
 Folio prepares the next audio source while a chapter is playing and starts it on the same audio element at the file boundary, without waiting for local progress writes or cache lookups. Downloaded next tracks work offline; speed and sound settings carry over, and sleep timers still stop at their requested boundary. Background continuation is designed for locked-screen and app-switching use, but still needs testing on the target iPhone/iOS version.
 
+On iPhone and iPad, playback uses the direct audio path, with voice boost and bass/treble processing disabled. Speed, volume, sleep timers, and system controls remain available. This bypasses a [reported WebKit issue where Web Audio can remain silent after resuming](https://bugs.webkit.org/show_bug.cgi?id=291892). After updating from an earlier build, close and reopen Folio to create a fresh audio element.
+
 ## CarPlay Now Playing
 
 Connect your iPhone to CarPlay, start a book in Folio on the phone, then open **Now Playing** on the car display. If another app is shown, select the current audio source or return to Folio on the phone and press Play.
