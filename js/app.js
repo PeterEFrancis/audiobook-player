@@ -801,6 +801,8 @@ document.addEventListener('change',async event=>{
 $('#search').addEventListener('input',event=>{shelfLimit=60;query=event.target.value;render();});
 modal.addEventListener('close',()=>{modalVersion++;readAlong.unmount();});
 modal.addEventListener('click',event=>{if(event.target===modal){const rect=modal.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)modal.close();}});
+document.addEventListener('pointerdown',()=>document.documentElement.classList.remove('keyboard-navigation'),true);
+document.addEventListener('keydown',()=>document.documentElement.classList.add('keyboard-navigation'),true);
 document.addEventListener('keydown',event=>{
   if(event.target.closest('input,textarea,select,[contenteditable]'))return;
   if(event.key==='/'){event.preventDefault();$('#search').focus();}

@@ -33,3 +33,5 @@
 .playback-help{border-top:1px solid var(--line);margin-top:12px;padding-top:6px}.playback-help .app-settings-actions{padding-top:6px}
 
 .playback-help [data-act=basic-audio-test]{grid-column:1/-1}
+html:not(.keyboard-navigation) :is(button,a,summary):focus{outline:none}
+html:not(.keyboard-navigation) .book-modal .modal-handle:focus-visible:before{outline:none}
