@@ -82,9 +82,9 @@ test('out-of-bounds and empty suffix ranges return 416 with the stored size', as
 
 test('offline navigation selects the landing or app shell within a GitHub Pages subpath', async () => {
   const app = worker();
-  await app.cache('folio-shell-v72').put('index.html', new Response('Landing page'));
-  await app.cache('folio-shell-v72').put('app.html', new Response('Audiobook player'));
-  await app.cache('folio-shell-v72').put('audio-test.html', new Response('Basic audio comparison'));
+  await app.cache('folio-shell-v73').put('index.html', new Response('Landing page'));
+  await app.cache('folio-shell-v73').put('app.html', new Response('Audiobook player'));
+  await app.cache('folio-shell-v73').put('audio-test.html', new Response('Basic audio comparison'));
   assert.equal(await (await app.request('./', { mode: 'navigate' })).text(), 'Landing page');
   assert.equal(await (await app.request('index.html', { mode: 'navigate' })).text(), 'Landing page');
   assert.equal(await (await app.request('app.html?book=example', { mode: 'navigate' })).text(), 'Audiobook player');
