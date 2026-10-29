@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLRC, cueAt } from '../js/lrc.js';
+import { parseLRC, cueAt, sentenceCues } from '../js/lrc.js';
 
 test('standard LRC sorts repeated timestamps, ignores metadata, and retains end-clearing cues', () => {
   const cues = parseLRC('\uFEFF[ti:Example]\r\n[ar:Author]\r\n[01:00.125][00:03.5]Repeated line\r\n[00:01.00]First line\r\n[00:04.00]\r\n[01:02:03.250]An hour later');
@@ -47,4 +47,29 @@ test('malformed input stays finite and literal text is not interpreted as markup
   assert.equal(cues[0].words, undefined);
   assert.equal(cueAt([], 1), -1);
   assert.equal(cueAt(cues, NaN), -1);
+});
+
+test('sentence cues join timed rows through abbreviations and retain the sentence start', () => {
+  const cues = sentenceCues(parseLRC('[00:01]Mr.\n[00:02]Dursley was perfectly\n[00:04]normal, thank you very much.\n[00:07]“Really?”\n[00:08]Yes. Two sentences in one row.'));
+  assert.deepEqual(cues, [
+    { start: 1, end: 7, text: 'Mr. Dursley was perfectly normal, thank you very much.' },
+    { start: 7, end: 8, text: '“Really?”' },
+    { start: 8, end: null, text: 'Yes. Two sentences in one row.' },
+  ]);
+  assert.equal(cueAt(cues, 5), 0);
+  assert.equal(cueAt(cues, 7), 1);
+});
+
+test('empty cues bound incomplete sentences and word times survive grouping without mutation', () => {
+  const raw = parseLRC('[00:01]<00:01>Hello\n[00:02]<00:02>world!\n[00:03]An unfinished thought\n[00:05]\n[00:07]A new thought…');
+  const before = structuredClone(raw);
+  const cues = sentenceCues(raw);
+  assert.deepEqual(raw, before);
+  assert.equal(cues[0].text, 'Hello world!');
+  assert.deepEqual(cues[0].words.map(word => word.start), [1, 2]);
+  assert.deepEqual(cues.slice(1), [
+    { start: 3, end: 5, text: 'An unfinished thought' },
+    { start: 5, end: 7, text: '' },
+    { start: 7, end: null, text: 'A new thought…' },
+  ]);
 });

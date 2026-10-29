@@ -54,7 +54,7 @@ Folio supplies the book title, author, cover, current chapter position and durat
 
 Folio reads timed LRC transcripts supplied by a Plex music library. Put a UTF-8 `.lrc` file beside its matching audio file (for example, `Chapter One.m4b` and `Chapter One.lrc`), then refresh the album’s metadata in Plex. Open **Now playing → Read along** in Folio. Use **Refresh** there after adding or changing a transcript.
 
-The active line follows playback, seeking, and chapter changes. Tap a line to seek to it; scroll to browse, then choose **Follow playback** to resume automatic scrolling. Enhanced LRC files with word timestamps also highlight individual words; ordinary LRC highlights timed lines. Transcripts use the audio file’s clock even when that file contains embedded chapters.
+The active sentence follows playback, seeking, and chapter changes. Folio joins split LRC rows through sentence endings and highlights the whole sentence, including text that wraps onto several screen lines. Tap a sentence to seek to its start; scroll to browse, then choose **Follow playback** to resume automatic scrolling. Standard and enhanced LRC files are supported. Transcripts use the audio file’s clock even when that file contains embedded chapters.
 
 Viewed transcripts are cached locally, and book downloads fetch available transcripts before starting audio downloads. For books downloaded before this feature, open Read along while connected to cache a chapter’s transcript, or download the book again to collect its available transcripts. Removing an offline book also removes its cached transcripts. Folio does not upload audio or generate transcripts.
 

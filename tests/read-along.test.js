@@ -62,8 +62,8 @@ class Element {
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const defer = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const cues = () => [
-  { start: 0, end: 10, text: 'Opening line' },
-  { start: 10, end: 18, text: 'Later line' },
+  { start: 0, end: 10, text: 'Opening line.' },
+  { start: 10, end: 18, text: 'Later line.' },
   { start: 18, end: null, text: '' },
 ];
 
@@ -166,4 +166,25 @@ test('hiding and unmounting abort pending work and disconnected views stop updat
   pending.resolve({ cues: cues() });
   await settle();
   assert.deepEqual(view.nodes, []);
+});
+
+test('the whole sentence stays highlighted across row timestamps and tall sentences align to the top', async t => {
+  const { view, player } = setup(t, async () => ({ cues: [
+    { start: 0, end: 5, text: 'A sentence split across' },
+    { start: 5, end: 12, text: 'two timed rows.', words: [{ start: 5, end: 12, text: 'two timed rows.' }] },
+    { start: 12, end: null, text: 'The next sentence.' },
+  ] }));
+  await settle();
+  assert.equal(view.nodes.length, 2);
+  assert.equal(view.nodes[0].textContent, 'A sentence split across two timed rows.');
+  assert.equal(view.nodes[0].children.length, 0);
+  view.nodes[0].getBoundingClientRect = () => ({ top: 45, height: 600 });
+  player.position = 8;
+  player.dispatchEvent(new Event('change'));
+  assert.equal(view.active, 0);
+  view.update(true);
+  assert.equal(view.scroll.scrolledTo.top, 25);
+  player.position = 12;
+  player.dispatchEvent(new Event('change'));
+  assert.equal(view.active, 1);
 });

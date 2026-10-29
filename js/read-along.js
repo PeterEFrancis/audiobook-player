@@ -1,4 +1,4 @@
-import { cueAt } from './lrc.js';
+import { cueAt, sentenceCues } from './lrc.js';
 import { absolutePosition } from './utils.js';
 
 export class ReadAlongView {
@@ -85,13 +85,8 @@ export class ReadAlongView {
       node?.setAttribute('aria-current', 'true');
       if (node && this.following) {
         const scrollRect = this.scroll.getBoundingClientRect(), nodeRect = node.getBoundingClientRect();
-        this.scroll.scrollTo({ top: this.scroll.scrollTop + nodeRect.top - scrollRect.top - (this.scroll.clientHeight - nodeRect.height) / 2, behavior: force || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+        this.scroll.scrollTo({ top: this.scroll.scrollTop + nodeRect.top - scrollRect.top - Math.max(0, (this.scroll.clientHeight - nodeRect.height) / 2), behavior: force || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
       }
-    }
-    const cue = this.cues[index], node = this.nodes[index];
-    if (cue?.words && node) {
-      const spans = node.querySelectorAll('[data-word]');
-      cue.words.forEach((word, i) => spans[i]?.classList.toggle('is-spoken', position >= word.start && (word.end == null || position < word.end)));
     }
   }
 
@@ -115,7 +110,7 @@ export class ReadAlongView {
     try {
       const result = await this.transcripts.load(book, track, { signal: controller.signal, refresh });
       if (!current()) return;
-      this.cues = result?.cues || [];
+      this.cues = sentenceCues(result?.cues || []);
       if (!this.cues.some(cue => cue.text.trim())) {
         this.status.textContent = navigator.onLine === false ? 'No downloaded transcript for this chapter.' : 'No timed transcript for this chapter.';
         this.note.textContent = 'Add a matching .lrc file beside the audio, then refresh the book’s metadata in Plex.';
@@ -128,14 +123,7 @@ export class ReadAlongView {
         const item = document.createElement('li'), button = document.createElement('button');
         button.type = 'button';
         button.dataset.cue = index;
-        if (cue.words?.length) cue.words.forEach((word, wi) => {
-          if (wi) button.append(document.createTextNode(' '));
-          const span = document.createElement('span');
-          span.dataset.word = wi;
-          span.textContent = word.text;
-          button.append(span);
-        });
-        else button.textContent = cue.text;
+        button.textContent = cue.text;
         item.append(button);
         fragment.append(item);
         return button;

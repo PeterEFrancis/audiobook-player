@@ -9,8 +9,6 @@
 .read-along-lines li{margin:0 0 20px;padding:0}
 .read-along-lines button{display:block;width:100%;min-height:44px;padding:3px 0;text-align:left;font-size:24px;line-height:1.4;font-weight:650;letter-spacing:-.45px;overflow-wrap:anywhere;color:var(--muted);opacity:.5;transition:color .18s,opacity .18s}
 .read-along-lines button.is-current{color:var(--green);opacity:1}
-.read-along-lines .is-current [data-word]{opacity:.5}
-.read-along-lines .is-current .is-spoken{opacity:1}
 .read-along-follow{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);white-space:nowrap;box-shadow:0 3px 16px #183f3220;font-size:11px;min-height:36px;padding:8px 14px}
 .now-tools [aria-pressed=true]{color:var(--green);font-weight:700}
 .player-modal.read-along-open{overflow:hidden}

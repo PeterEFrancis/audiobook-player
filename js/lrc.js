@@ -78,6 +78,32 @@ export function parseLRC(source) {
   return cues;
 }
 
+function sentenceEnd(text) {
+  const end = text.trim().replace(/["'”’»\)\]]+$/u, '');
+  if (/\b(?:Mr|Mrs|Ms|Dr|Prof|St|Jr|Sr|vs|etc|e\.g|i\.e|a\.m|p\.m)\.$/i.test(end)
+      || /\b(?:[A-Za-z]\.){2,}$/.test(end) || /\b[A-Z]\.$/.test(end)) return false;
+  return /[.!?…]$/.test(end);
+}
+
+/** Keep a complete sentence active across LRC rows, without inventing word times. */
+export function sentenceCues(cues) {
+  const result = [];
+  let sentence;
+  const flush = () => { if (sentence) result.push(sentence); sentence = null; };
+  for (const cue of cues) {
+    if (!cue.text.trim()) { flush(); result.push({ ...cue }); continue; }
+    if (!sentence) sentence = { ...cue, ...(cue.words ? { words: [...cue.words] } : {}) };
+    else {
+      sentence.text += ` ${cue.text}`;
+      sentence.end = cue.end;
+      if (cue.words) sentence.words = [...(sentence.words || []), ...cue.words];
+    }
+    if (sentenceEnd(cue.text)) flush();
+  }
+  flush();
+  return result;
+}
+
 /** The last starting cue wins, including empty cues used to clear the text. */
 export function cueAt(cues, position) {
   if (!Number.isFinite(position)) return -1;
