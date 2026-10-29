@@ -86,3 +86,39 @@ test('transcript cancellation propagates and authorization failures are not repo
   await assert.rejects(client.transcript(server, { ratingKey: '10' }, { signal: controller.signal }), error => error === reason);
   await assert.rejects(client.transcript(server, { ratingKey: '10' }), error => error.status === 403);
 });
+
+test('Plex structured JSON lyrics preserve span timing, text, and clearing cues', async t => {
+  t.mock.method(globalThis, 'fetch', async (address, options) => {
+    if (new URL(address).pathname === '/library/metadata/10') return json(metadata([{ key: '/audio.m4b', Stream: [{ id: '100', streamType: 4, format: 'lrc' }] }]));
+    assert.equal(options.headers.Accept, 'application/json');
+    return json({ MediaContainer: { Lyrics: [{ Line: [
+      { startOffset: 1000, Span: [{ startOffset: 1200, text: 'Café ' }, { startOffset: 1500, text: 'and friends.' }] },
+      { startOffset: 3000, Span: [{ text: 'A second sentence.' }] },
+      { startOffset: 4500, Span: [{ text: '' }] },
+    ] }] } });
+  });
+  const result = await new PlexClient().transcript(server, { ratingKey: '10', key: '/audio.m4b' });
+  assert.equal(result.text, '[00:01.200]Café and friends.\n[00:03.000]A second sentence.\n[00:04.500]\n');
+});
+
+test('Plex XML lyrics decode escaped text and support line timestamps without executing markup', async t => {
+  t.mock.method(globalThis, 'fetch', async address => {
+    if (new URL(address).pathname === '/library/metadata/10') return json(metadata([{ key: '/audio.m4b', Stream: [{ id: '100', streamType: 4, format: 'lrc' }] }]));
+    return new Response('<?xml version="1.0"?><MediaContainer size="1"><Lyrics timed="1"><Line startOffset="1000"><Span text="Tom &amp; &#x4a;erry &quot;said&quot; &lt;img src=x&gt;." startOffset="1250" /></Line><Line startOffset="3000"/><Line startOffset="4000"><Span text="Next line."/></Line></Lyrics></MediaContainer>', { headers: { 'Content-Type': 'application/xml' } });
+  });
+  const result = await new PlexClient().transcript(server, { ratingKey: '10', key: '/audio.m4b' });
+  assert.equal(result.text, '[00:01.250]Tom & Jerry "said" <img src=x>.\n[00:03.000]\n[00:04.000]Next line.\n');
+});
+
+test('actual timed content works with misleading MIME labels, while empty envelopes and gateway HTML do not', async t => {
+  let response;
+  t.mock.method(globalThis, 'fetch', async address => new URL(address).pathname === '/library/metadata/10'
+    ? json(metadata([{ key: '/audio.m4b', Stream: [{ id: '100', streamType: 4, format: 'lrc' }] }])) : response);
+  const client = new PlexClient(), track = { ratingKey: '10', key: '/audio.m4b' };
+  response = new Response('[00:01.20]A real timed line.\n', { headers: { 'Content-Type': 'application/xml' } });
+  assert.equal((await client.transcript(server, track)).text, '[00:01.20]A real timed line.\n');
+  response = json({ MediaContainer: { Lyrics: [], other: '\n[00:01.20]Must not become lyrics' } });
+  assert.equal(await client.transcript(server, track), null);
+  response = new Response('<html><body>[00:01.20]Gateway error</body></html>', { headers: { 'Content-Type': 'text/plain' } });
+  await assert.rejects(client.transcript(server, track), /unsupported transcript response/);
+});

@@ -1,3 +1,5 @@
+import { parseLRC } from './lrc.js';
+
 const CLOUD = 'https://plex.tv/api/v2';
 const PRODUCT = 'Folio Audiobooks';
 const seconds = value => Math.max(0, Number(value) || 0) / 1000;
@@ -18,6 +20,75 @@ export class PlexError extends Error {
     this.name = 'PlexError';
     this.status = status;
   }
+}
+
+function lyricOffset(value) {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !/^\d+(?:\.\d+)?$/.test(value))) return null;
+  const offset = Number(value);
+  return Number.isFinite(offset) && offset >= 0 && offset <= Number.MAX_SAFE_INTEGER ? offset : null;
+}
+
+function timedLyrics(lyrics) {
+  for (const lyric of array(lyrics)) {
+    const rows = array(lyric?.Line).flatMap(line => {
+      const spans = array(line?.Span);
+      const start = lyricOffset(spans[0]?.startOffset) ?? lyricOffset(line?.startOffset);
+      if (start == null) return [];
+      const milliseconds = Math.round(start);
+      const minutes = Math.floor(milliseconds / 60000), seconds = Math.floor(milliseconds % 60000 / 1000);
+      const stamp = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(milliseconds % 1000).padStart(3, '0')}`;
+      const text = spans.map(span => typeof span?.text === 'string' ? span.text : '').join('').replace(/[\r\n]+/g, ' ');
+      return [{ text, row: `[${stamp}]${text}` }];
+    });
+    if (rows.some(row => row.text.trim())) return rows.map(row => row.row).join('\n') + '\n';
+  }
+  return null;
+}
+
+const xmlEntities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+function xmlText(value) {
+  return value.replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (entity, key) => {
+    if (key[0] !== '#') return xmlEntities[key] ?? entity;
+    const code = key[1].toLowerCase() === 'x' ? parseInt(key.slice(2), 16) : Number(key.slice(1));
+    return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? String.fromCodePoint(code) : entity;
+  });
+}
+
+function xmlAttributes(source) {
+  const attributes = {};
+  for (const match of source.matchAll(/\b([A-Za-z_][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) attributes[match[1]] = xmlText(match[2] ?? match[3]);
+  return attributes;
+}
+
+function plexTranscriptText(source) {
+  const text = source.replace(/^\uFEFF/, '').trimStart();
+  if (!text.trim()) return null;
+  if (text.startsWith('{') || text.startsWith('[') && !/^\[(?:\d+:|[A-Za-z]+:)/.test(text)) {
+    let data;
+    try { data = JSON.parse(text); } catch { throw new PlexError('Plex returned an unsupported transcript response.'); }
+    if (!data?.MediaContainer || typeof data.MediaContainer !== 'object') throw new PlexError('Plex returned an unsupported transcript response.');
+    return timedLyrics(data.MediaContainer.Lyrics);
+  }
+  if (text.startsWith('<')) {
+    // Plex defaults to a MediaContainer/Lyrics XML envelope. Only read that
+    // documented shape; never render markup or expand DTD/external entities.
+    const xml = text.replace(/^<\?xml[^?]*\?>\s*/, '');
+    if (/^<MediaContainer\b[^>]*\/>\s*$/.test(xml)) return null;
+    if (/<!DOCTYPE|<!ENTITY/i.test(xml) || !/^<MediaContainer\b[\s\S]*<\/MediaContainer>\s*$/.test(xml)) throw new PlexError('Plex returned an unsupported transcript response.');
+    const lyrics = [];
+    for (const lyric of xml.matchAll(/<Lyrics\b[^>]*>([\s\S]*?)<\/Lyrics\s*>/g)) {
+      const lines = [];
+      for (const line of lyric[1].matchAll(/<Line\b([^>]*?)(?:\/>|>([\s\S]*?)<\/Line\s*>)/g)) {
+        const spans = [...(line[2] || '').matchAll(/<Span\b((?:"[^"]*"|'[^']*'|[^'">])*)\/?>/g)].map(span => xmlAttributes(span[1]));
+        lines.push({ ...xmlAttributes(line[1]), Span: spans });
+      }
+      lyrics.push({ Line: lines });
+    }
+    return timedLyrics(lyrics);
+  }
+  // Some servers/proxies label raw LRC as XML or JSON. Validate the content,
+  // rather than treating the Content-Type header as proof that it is absent.
+  return parseLRC(source).some(cue => cue.text.trim()) ? source : null;
 }
 
 /** All public durations and offsets are seconds; Plex's wire format is milliseconds. */
@@ -322,19 +393,18 @@ export class PlexClient {
     const limit = 5 * 1024 * 1024;
     try {
       const response = await fetch(this._url(this._serverURL(server), key, server.token), {
-        headers: { Accept: 'application/x-lrc, text/plain;q=0.9, */*;q=0.1' }, signal: controller.signal,
+        headers: { Accept: 'application/json' }, signal: controller.signal,
         mode: 'cors', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', redirect: 'error',
       });
       if (response.status === 404 || response.status === 204) return null;
       if (response.status === 401 || response.status === 403) throw new PlexError('Plex denied access to this transcript. Reconnect the server in Settings.', response.status);
       if (!response.ok) throw new PlexError(`Plex could not load the transcript (HTTP ${response.status}).`, response.status);
       if (Number(response.headers.get('Content-Length')) > limit) { await response.body?.cancel(); throw new PlexError('This transcript is too large to read.'); }
-      if (/text\/html|application\/(?:json|xml)/i.test(response.headers.get('Content-Type') || '')) { await response.body?.cancel(); throw new PlexError('Plex did not return a timed lyrics file.'); }
       const reader = response.body?.getReader();
       if (!reader) {
         const text = await response.text();
         if (new TextEncoder().encode(text).byteLength > limit) throw new PlexError('This transcript is too large to read.');
-        return text;
+        return plexTranscriptText(text);
       }
       const decoder = new TextDecoder();
       let size = 0, text = '';
@@ -346,7 +416,7 @@ export class PlexClient {
           if (size > limit) { await reader.cancel(); throw new PlexError('This transcript is too large to read.'); }
           text += decoder.decode(value, { stream: true });
         }
-        return text + decoder.decode();
+        return plexTranscriptText(text + decoder.decode());
       } finally { reader.releaseLock(); }
     } catch (error) {
       if (signal?.aborted) throw signal.reason || new DOMException('Request canceled', 'AbortError');

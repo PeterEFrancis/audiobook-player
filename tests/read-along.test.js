@@ -67,7 +67,7 @@ const cues = () => [
   { start: 18, end: null, text: '' },
 ];
 
-function setup(t, load = async () => ({ cues: cues() })) {
+function setup(t, load = async () => ({ cues: cues() }), { visible = true } = {}) {
   const previous = new Map(['document', 'navigator', 'matchMedia'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const document = new EventTarget();
   Object.assign(document, { hidden: false, createElement: tag => new Element(tag), createDocumentFragment: () => new Element('fragment'), createTextNode: text => { const node = new Element('text'); node.textContent = text; return node; } });
@@ -83,7 +83,7 @@ function setup(t, load = async () => ({ cues: cues() })) {
   Object.defineProperty(player, 'track', { get: () => player.book.tracks[player.index] });
   const view = new ReadAlongView({ player, transcripts: { load } });
   const root = new Element('root'), dialog = new Element(), artwork = new Element(), toggle = new Element();
-  view.mount(root, { dialog, artwork, toggle, visible: true });
+  view.mount(root, { dialog, artwork, toggle, visible });
   t.after(() => {
     view.unmount();
     for (const [key, descriptor] of previous) {
@@ -95,8 +95,12 @@ function setup(t, load = async () => ({ cues: cues() })) {
 }
 
 test('read along follows seeks and pending seeks and clears highlighting at an empty cue', async t => {
-  const { view, player, artwork, toggle } = setup(t);
+  const { view, player, root, artwork, toggle } = setup(t);
+  assert.equal(toggle.hidden, true);
+  assert.equal(root.hidden, true);
+  assert.equal(artwork.hidden, false);
   await settle();
+  assert.equal(toggle.hidden, false);
   assert.equal(artwork.hidden, true);
   assert.equal(toggle.getAttribute('aria-pressed'), 'true');
   assert.equal(view.nodes[0].classList.contains('is-current'), true);
@@ -119,15 +123,18 @@ test('read along follows seeks and pending seeks and clears highlighting at an e
 
 test('late old-track loads cannot replace the newly selected chapter', async t => {
   const first = defer(), second = defer(), calls = [];
-  const { view, player } = setup(t, (_book, track, options) => {
+  const { view, player, toggle, artwork } = setup(t, (_book, track, options) => {
     calls.push({ id: track.id, signal: options.signal });
     return track.id === 'first' ? first.promise : second.promise;
   });
   player.index = 1;
   player.dispatchEvent(new Event('change'));
   assert.equal(calls[0].signal.aborted, true);
+  assert.equal(toggle.hidden, true);
+  assert.equal(artwork.hidden, false);
   second.resolve({ cues: [{ start: 0, end: null, text: 'New chapter' }] });
   await settle();
+  assert.equal(toggle.hidden, false);
   assert.equal(view.nodes[0].textContent, 'New chapter');
   first.resolve({ cues: [{ start: 0, end: null, text: 'Stale chapter' }] });
   await settle();
@@ -149,23 +156,75 @@ test('clicking a transcript line seeks using the absolute book offset and markup
   assert.deepEqual(player.seeks, [112]);
 });
 
-test('hiding and unmounting abort pending work and disconnected views stop updating', async t => {
+test('cover mode preserves availability work but disconnected views abort it', async t => {
   const pending = defer(), signals = [];
   const { view, root, artwork, dialog } = setup(t, (_book, _track, { signal }) => { signals.push(signal); return pending.promise; });
   view.setVisible(false);
-  assert.equal(signals[0].aborted, true);
+  assert.equal(signals[0].aborted, false);
   assert.equal(root.hidden, true);
   assert.equal(artwork.hidden, false);
   assert.equal(dialog.classList.contains('read-along-open'), false);
   view.setVisible(true);
-  assert.equal(signals.length, 2);
+  assert.equal(signals.length, 1);
+  assert.equal(root.hidden, true);
   root.isConnected = false;
   view.update();
-  assert.equal(signals[1].aborted, true);
+  assert.equal(signals[0].aborted, true);
   assert.equal(view.root, null);
   pending.resolve({ cues: cues() });
   await settle();
   assert.deepEqual(view.nodes, []);
+});
+
+test('cover mode discovers a transcript without exposing the option before it is usable', async t => {
+  const pending = defer();
+  let requests = 0;
+  const { view, root, artwork, toggle } = setup(t, () => { requests++; return pending.promise; }, { visible: false });
+  assert.equal(requests, 1);
+  assert.equal(toggle.hidden, true);
+  assert.equal(root.hidden, true);
+  assert.equal(artwork.hidden, false);
+  pending.resolve({ cues: cues() });
+  await settle();
+  assert.equal(toggle.hidden, false);
+  assert.equal(root.hidden, true);
+  assert.equal(artwork.hidden, false);
+  view.setVisible(true);
+  assert.equal(root.hidden, false);
+  assert.equal(artwork.hidden, true);
+});
+
+test('missing, empty, and failed transcripts leave the option hidden and the cover visible', async t => {
+  const cases = [
+    ['missing', async () => null],
+    ['empty', async () => ({ cues: [{ start: 0, end: null, text: '' }] })],
+    ['failed', async () => { throw new Error('Plex returned XML instead of timed text.'); }],
+  ];
+  for (const [name, load] of cases) await t.test(name, async t => {
+    const { root, artwork, toggle, dialog } = setup(t, load);
+    await settle();
+    assert.equal(toggle.hidden, true);
+    assert.equal(root.hidden, true);
+    assert.equal(artwork.hidden, false);
+    assert.equal(dialog.classList.contains('read-along-open'), false);
+    assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+  });
+});
+
+test('an old transcript response cannot restore the option after switching to a file without text', async t => {
+  const first = defer(), second = defer();
+  const { view, player, root, artwork, toggle } = setup(t, (_book, track) => track.id === 'first' ? first.promise : second.promise);
+  player.index = 1;
+  player.dispatchEvent(new Event('change'));
+  second.resolve(null);
+  await settle();
+  assert.equal(toggle.hidden, true);
+  first.resolve({ cues: cues() });
+  await settle();
+  assert.equal(toggle.hidden, true);
+  assert.equal(root.hidden, true);
+  assert.equal(artwork.hidden, false);
+  assert.equal(view.nodes.length, 0);
 });
 
 test('the whole sentence stays highlighted across row timestamps and tall sentences align to the top', async t => {

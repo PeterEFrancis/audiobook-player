@@ -20,8 +20,9 @@
 .read-along-open .now-text p{font-size:11px}
 .read-along-open .now-text small{margin:5px 0 8px}
 .read-along-open .read-along{flex:1;min-height:100px;margin-bottom:14px}
-.read-along-open .now-controls{flex:none;margin:0}
+.read-along-open .now-controls{flex:none;margin:0 auto}
 .read-along-open .now-tools{margin-top:10px}
 .read-along-open .now-tools+.now-tools{margin-top:5px;padding-top:5px;flex-wrap:wrap;gap:6px 16px}
+@media(min-width:900px){.player-modal.read-along-open{height:90dvh}}
 @media(max-height:700px){.read-along-open .now-tools button{min-height:44px}.read-along-open .now-tools .icon{width:18px;height:18px;margin-bottom:3px}.read-along-open .now-controls>.scrubber{margin-bottom:5px}.read-along-lines button{font-size:21px}.read-along-lines li{margin-bottom:16px}}
 @media(prefers-reduced-motion:reduce){.read-along-lines button{transition:none}}

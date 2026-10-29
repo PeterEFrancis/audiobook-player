@@ -13,7 +13,7 @@ export class ReadAlongView {
   mount(root, { dialog, artwork, toggle, visible = false }) {
     this.unmount();
     if (!root) return;
-    Object.assign(this, { root, dialog, artwork, toggle, key: null, cues: [], nodes: [], active: -1, following: true });
+    Object.assign(this, { root, dialog, artwork, toggle, key: null, cues: [], nodes: [], active: -1, following: true, available: false, loading: false });
     root.innerHTML = '<div class="read-along-toolbar"><span>Read along</span><button type="button" class="text-button" data-transcript-refresh>Refresh</button></div><p class="read-along-status" role="status"></p><p class="read-along-note" hidden></p><div class="read-along-scroll" tabindex="0" aria-label="Timed transcript"><ol class="read-along-lines"></ol></div><button type="button" class="read-along-follow button secondary" hidden>Follow playback</button>';
     this.scroll = root.querySelector('.read-along-scroll');
     this.list = root.querySelector('.read-along-lines');
@@ -51,29 +51,36 @@ export class ReadAlongView {
     this.cues = [];
     this.nodes = [];
     this.key = null;
+    this.available = false;
+    this.loading = false;
   }
 
   trackKey() {
     return this.player.book && this.player.track ? JSON.stringify([this.player.book.id, this.player.track.id]) : null;
   }
 
-  setVisible(visible) {
+  applyVisibility() {
     if (!this.root) return;
-    this.visible = visible;
-    this.root.hidden = !visible;
-    this.artwork.hidden = visible;
-    this.dialog.classList.toggle('read-along-open', visible);
-    this.toggle.setAttribute('aria-pressed', String(visible));
-    if (visible) this.update(true);
-    else { this.controller?.abort(); if (this.loading) this.key = null; }
+    this.visible = this.requestedVisible && this.available;
+    this.root.hidden = !this.visible;
+    this.artwork.hidden = this.visible;
+    this.toggle.hidden = !this.available;
+    this.dialog.classList.toggle('read-along-open', this.visible);
+    this.toggle.setAttribute('aria-pressed', String(this.visible));
+  }
+
+  setVisible(visible) {
+    this.requestedVisible = !!visible;
+    this.applyVisibility();
+    this.update(true);
   }
 
   update(force = false) {
     if (!this.root) return;
     if (!this.root.isConnected) { this.unmount(); return; }
-    if (!this.visible || document.hidden) return;
+    if (document.hidden) return;
     if (this.key !== this.trackKey()) { void this.load(); return; }
-    if (this.loading || !this.cues.length) return;
+    if (!this.visible || this.loading || !this.cues.length) return;
     const position = this.player.pendingSeek ?? this.player.position;
     const index = cueAt(this.cues, position);
     if (index !== this.active || force) {
@@ -91,17 +98,23 @@ export class ReadAlongView {
   }
 
   async load(refresh = false) {
-    if (!this.root || !this.visible || !this.player.track) return;
+    if (!this.root || !this.player.track) return;
     this.controller?.abort();
     const controller = this.controller = new AbortController(), root = this.root;
-    const book = this.player.book, track = this.player.track, key = this.key = this.trackKey();
+    const book = this.player.book, track = this.player.track, key = this.trackKey();
+    const changed = this.key !== key;
+    this.key = key;
     this.loading = true;
-    this.cues = [];
-    this.nodes = [];
-    this.active = -1;
-    this.following = true;
-    this.follow.hidden = true;
-    this.list.replaceChildren();
+    if (changed) {
+      this.cues = [];
+      this.nodes = [];
+      this.active = -1;
+      this.following = true;
+      this.follow.hidden = true;
+      this.available = false;
+      this.list.replaceChildren();
+      this.applyVisibility();
+    }
     this.note.hidden = true;
     this.status.hidden = false;
     this.status.textContent = 'Loading transcript…';
@@ -111,13 +124,19 @@ export class ReadAlongView {
       const result = await this.transcripts.load(book, track, { signal: controller.signal, refresh });
       if (!current()) return;
       this.cues = sentenceCues(result?.cues || []);
-      if (!this.cues.some(cue => cue.text.trim())) {
+      this.available = this.cues.some(cue => cue.text.trim());
+      this.applyVisibility();
+      if (!this.available) {
+        this.list.replaceChildren();
+        this.nodes = [];
+        this.active = -1;
         this.status.textContent = navigator.onLine === false ? 'No downloaded transcript for this chapter.' : 'No timed transcript for this chapter.';
         this.note.textContent = 'Add a matching .lrc file beside the audio, then refresh the book’s metadata in Plex.';
         this.note.hidden = navigator.onLine === false;
         return;
       }
       const fragment = document.createDocumentFragment();
+      this.active = -1;
       this.nodes = this.cues.map((cue, index) => {
         if (!cue.text.trim()) return null;
         const item = document.createElement('li'), button = document.createElement('button');
@@ -128,10 +147,17 @@ export class ReadAlongView {
         fragment.append(item);
         return button;
       });
-      this.list.append(fragment);
+      this.list.replaceChildren(fragment);
       this.status.hidden = true;
     } catch (error) {
-      if (current()) this.status.textContent = error.message || 'Could not load the transcript. Try Refresh.';
+      if (current()) {
+        this.status.textContent = error.message || 'Could not load the transcript. Try again.';
+        this.available = false;
+        this.cues = [];
+        this.nodes = [];
+        this.list.replaceChildren();
+        this.applyVisibility();
+      }
     } finally {
       if (current()) { this.loading = false; this.refresh.disabled = false; this.update(true); }
     }
