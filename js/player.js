@@ -67,14 +67,34 @@ export class Player extends EventTarget {
     }
     this.timer = setInterval(() => this.checkSleep(), 500);
     this.setupMediaSession();
-    document.addEventListener('visibilitychange', () => { this.tracePlayback('visibility'); if (document.hidden) this.persist().catch(() => {}); });
+    document.addEventListener('visibilitychange', () => {
+      this.tracePlayback('visibility');
+      if (document.hidden) this.persist().catch(() => {});
+      else this.reconcilePlayback();
+    });
+    window.addEventListener('pageshow', () => this.reconcilePlayback());
+    try { navigator.audioSession?.addEventListener?.('statechange', () => { this.tracePlayback('audio-session-state'); this.reconcilePlayback(); }); } catch {}
     window.addEventListener('pagehide', () => this.persist().catch(() => {}));
   }
   get track() { return this.book?.tracks?.[this.index]; }
   get position() { return this.pendingSeek ?? this.audio.currentTime ?? 0; }
   get elapsed() { return this.book ? absolutePosition(this.book, this.index, this.position) : 0; }
-  get playing() { return !this.audio.paused; }
+  get playing() { return !this.audio.paused && !this.audio.ended; }
   get speed() { return this.audio.playbackRate; }
+  reconcilePlayback() {
+    if (this.switching) return;
+    try { if (navigator.audioSession?.state === 'interrupted') this.audio.pause(); } catch {}
+    if (this.audio.paused || this.audio.ended) {
+      if (this.listening || this.playbackStarted) this.progressChanged = true;
+      this.listening = this.playbackStarted = false;
+      // A missing pause event has no reliable wall-clock time. Keep the media
+      // position without counting the time spent away as listening.
+      this.lastTick = Date.now();
+      this.pausedAt ||= Date.now();
+      this.persist().catch(error => this.error(error));
+    }
+    this.emit();
+  }
   emit() {
     this.dispatchEvent(new CustomEvent('change'));
     this.updateMediaSession();
@@ -119,7 +139,7 @@ export class Player extends EventTarget {
     if (this.playbackEvents.length > 40) this.playbackEvents.shift();
   }
   diagnostics() {
-    return {build: 'folio-audio-75', nativeAudioOnly: this.nativeAudioOnly, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
+    return {build: 'folio-audio-76', nativeAudioOnly: this.nativeAudioOnly, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
   }
   async reloadAudio() {
     if (!this.book || !this.audio.src) return;
@@ -491,7 +511,7 @@ export class Player extends EventTarget {
   }
   setupMediaSession() {
     if (!navigator.mediaSession) return;
-    const pause = async () => { this.audio.pause(); await this.persist(); this.emit(); };
+    const pause = async () => { this.audio.pause(); this.emit(); await this.persist(); };
     const actions = {play: () => this.play({system: true}), pause, stop: pause, seekbackward: d => this.skip(-(d.seekOffset || 15)), seekforward: d => this.skip(d.seekOffset || 30), previoustrack: () => this.chapter(-1), nexttrack: () => this.chapter(1), seekto: d => {
       if (!this.book || !Number.isFinite(d.seekTime)) return;
       const chapter = playbackChapter(this.book, this.index, this.position);
