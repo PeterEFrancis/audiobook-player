@@ -42,6 +42,7 @@ export class Player extends EventTarget {
       this.listening = true;
       this.playbackStarted = true;
       this.progressChanged = true;
+      void this.prepareNext();
       this.setupMediaSession();
       this.mediaMetadataKey = null;
       this.emit();
@@ -118,7 +119,7 @@ export class Player extends EventTarget {
     if (this.playbackEvents.length > 40) this.playbackEvents.shift();
   }
   diagnostics() {
-    return {build: 'folio-audio-73', nativeAudioOnly: this.nativeAudioOnly, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
+    return {build: 'folio-audio-75', nativeAudioOnly: this.nativeAudioOnly, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
   }
   async reloadAudio() {
     if (!this.book || !this.audio.src) return;
@@ -147,7 +148,7 @@ export class Player extends EventTarget {
   async open(book, options = {}) {
     const generation = ++this.generation;
     this.opening = generation;
-    this.nextSource = this.nextPreparation = null;
+    this.clearPreparation();
     try { return await this.openSource(book, options, generation); }
     finally { if (this.opening === generation) this.opening = null; }
   }
@@ -179,6 +180,8 @@ export class Player extends EventTarget {
     this.index = index;
     this.pendingSeek = Math.max(0, Number(position) || 0);
     this.audio.src = source;
+    if (this.activeObjectURL) URL.revokeObjectURL(this.activeObjectURL);
+    this.activeObjectURL = null;
     this.activeSource = this.audio.src;
     this.audio.playbackRate = saved?.speed || this.settings.speed || 1;
     this.audio.volume = this.settings.volume ?? 1;
@@ -197,13 +200,54 @@ export class Player extends EventTarget {
     void this.prepareNext();
     if (autoplay && !this.sleepStopped) await this.play();
   }
+  clearPreparation() {
+    this.nextSource?.controller?.abort();
+    if (this.nextSource?.bufferedSource) URL.revokeObjectURL(this.nextSource.bufferedSource);
+    this.nextSource = this.nextPreparation = null;
+  }
+  async prebuffer(next) {
+    const limit = 64 * 1024 * 1024;
+    if (!this.playing || next.buffering || !window.fetch || !URL.createObjectURL || Number(this.book?.tracks[next.index]?.size) > limit) return;
+    const duration = this.track?.duration || this.audio.duration;
+    const buffered = this.audio.buffered;
+    const loaded = buffered?.length && buffered.end(buffered.length - 1) >= duration - 0.1;
+    if (!loaded && duration - this.position > 300) return;
+    next.buffering = true;
+    const controller = next.controller = new AbortController();
+    const current = () => this.nextSource === next && this.generation === next.generation && !controller.signal.aborted;
+    let reader;
+    try {
+      const response = await window.fetch(next.source, {credentials: 'omit', signal: controller.signal});
+      const expected = Number(response.headers.get('Content-Length'));
+      if (!current() || response.status !== 200 || expected > limit) return;
+      reader = response.body?.getReader();
+      if (!reader) return;
+      const chunks = [];
+      let size = 0;
+      while (current()) {
+        const {done, value} = await reader.read();
+        if (done) {
+          if (size && current() && (!expected || size === expected)) next.bufferedSource = URL.createObjectURL(new Blob(chunks, {type: response.headers.get('Content-Type') || 'application/octet-stream'}));
+          break;
+        }
+        size += value.byteLength;
+        if (size > limit) break;
+        chunks.push(value);
+      }
+    } catch {} // Keep the original stream available if look-ahead fails.
+    finally {
+      controller.abort();
+      if (reader) { try { await reader.cancel(); } catch {} reader.releaseLock(); }
+      next.controller = null;
+    }
+  }
   prepareNext({force = false} = {}) {
     const book = this.book, index = this.index + 1, generation = this.generation;
-    if (!book?.tracks[index]) { this.nextSource = this.nextPreparation = null; return Promise.resolve(null); }
+    if (!book?.tracks[index]) { this.clearPreparation(); return Promise.resolve(null); }
     const current = value => value?.bookId === book.id && value.index === index && value.generation === generation;
-    if (!force && current(this.nextSource)) return Promise.resolve(this.nextSource);
+    if (!force && current(this.nextSource)) { void this.prebuffer(this.nextSource); return Promise.resolve(this.nextSource); }
     if (!force && current(this.nextPreparation)) return this.nextPreparation.promise;
-    this.nextSource = null;
+    this.clearPreparation();
     const task = {bookId: book.id, index, generation};
     this.nextPreparation = task;
     task.promise = (async () => {
@@ -212,7 +256,9 @@ export class Player extends EventTarget {
         const local = await this.downloads.hasTrack(book.id, track.id);
         const source = local ? this.downloads.audioURL(book.id, track.id) : this.plex.mediaURL(this.getServer(book.serverId), track);
         if (this.nextPreparation !== task || this.book !== book || this.index + 1 !== index || this.generation !== generation) return null;
-        return this.nextSource = {...task, source, local};
+        this.nextSource = {...task, source, local};
+        void this.prebuffer(this.nextSource);
+        return this.nextSource;
       } catch { return null; } // A failed look-ahead must not stop the current chapter.
       finally { if (this.nextPreparation === task) this.nextPreparation = null; }
     })();
@@ -223,12 +269,14 @@ export class Player extends EventTarget {
     const prepared = this.nextSource;
     const ready = prepared?.bookId === book.id && prepared.index === index && prepared.generation === this.generation;
     const local = (ready && prepared.local) || !navigator.onLine;
-    const source = local ? (ready && prepared.local ? prepared.source : this.downloads.audioURL(book.id, track.id)) : this.plex.mediaURL(this.getServer(book.serverId), track);
+    const bufferedSource = ready ? prepared.bufferedSource : null;
+    const source = bufferedSource || (local ? (ready && prepared.local ? prepared.source : this.downloads.audioURL(book.id, track.id)) : this.plex.mediaURL(this.getServer(book.serverId), track));
     // Snapshot the finished file, but never wait for storage while iOS is handing off audio.
     void this.persist().catch(error => this.error(error));
     const rate = this.speed, volume = this.audio.volume;
     this.generation++;
-    this.nextSource = this.nextPreparation = null;
+    if (bufferedSource) prepared.bufferedSource = null;
+    this.clearPreparation();
     this.index = index;
     this.pendingSeek = 0;
     this.local = local;
@@ -237,6 +285,8 @@ export class Player extends EventTarget {
     this.pausedAt = 0;
     this.progressChanged = true;
     this.audio.src = source;
+    if (this.activeObjectURL) URL.revokeObjectURL(this.activeObjectURL);
+    this.activeObjectURL = bufferedSource;
     this.activeSource = this.audio.src;
     this.audio.playbackRate = rate;
     this.audio.volume = volume;
@@ -352,6 +402,7 @@ export class Player extends EventTarget {
   tick() {
     const now = Date.now();
     this.accountListening();
+    if (this.playing) void this.prepareNext();
     if (now - this.lastSave > 5000) { this.lastSave = now; this.persist().catch(e => this.error(e)); }
     this.checkSleep();
     this.emit();

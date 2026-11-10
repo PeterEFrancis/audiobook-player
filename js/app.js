@@ -295,6 +295,9 @@ async function stopCurrentBook(id, save = true) {
   player.activeSource=null;
   player.audio.removeAttribute('src');
   player.audio.load();
+  player.clearPreparation();
+  if(player.activeObjectURL)URL.revokeObjectURL(player.activeObjectURL);
+  player.activeObjectURL=null;
   $('#mini-player').hidden=true;
   if(navigator.mediaSession){navigator.mediaSession.metadata=null;navigator.mediaSession.playbackState='none';}
   try{await saved;}finally{player.switching=false;player.emit();}
