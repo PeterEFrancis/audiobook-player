@@ -42,6 +42,7 @@ for(const event of ['visibilitychange','pageshow']) test(`${event} reconciles a 
   const changes=[];player.addEventListener('change',()=>changes.push(player.playing));
   document.hidden=false;(event==='pageshow'?window:document).dispatchEvent(new Event(event));
   assert.equal(changes.at(-1),false);assert.equal(player.playing,false);
+  assert.equal(player.resumeRequired,true);
   assert.equal(player.listening,false);assert.equal(player.playbackStarted,false);
   assert.equal(player.session.listened,listened);assert.ok(Date.now()-player.lastTick<1000);
   assert.equal(mediaSession.playbackState,'paused');assert.ok(player.pausedAt>0);
@@ -60,11 +61,22 @@ test('audio-session interruption pauses once without unloading and does not resu
   audio.currentTime=27;audio.playbackRate=1.5;audio.volume=.4;
   session.state='interrupted';session.dispatchEvent(new Event('statechange'));
   assert.equal(player.playing,false);assert.equal(mediaSession.playbackState,'paused');
-  assert.equal(audio.pauseCalls,pauses+1);assert.equal(audio.src,source);assert.equal(audio.loadCalls,0);
+  assert.ok(audio.pauseCalls>pauses);assert.equal(audio.src,source);assert.equal(audio.loadCalls,0);
   assert.equal(player.position,27);assert.equal(player.speed,1.5);assert.equal(audio.volume,.4);
   session.state='active';session.dispatchEvent(new Event('statechange'));
   assert.equal(audio.playCalls,plays);assert.equal(audio.paused,true);
+  document.hidden=false;
+  for(const type of ['play','playing']) {
+    audio.paused=false;audio.dispatchEvent(new Event(type));
+    assert.equal(audio.paused,true);assert.equal(player.playing,false);
+  }
+  window.dispatchEvent(new Event('pageshow'));
+  assert.equal(player.resumeRequired,true);assert.equal(audio.playCalls,plays);
   await settle(player);assert.equal(writes.filter(row=>row.store==='sync').at(-1).value.state,'stopped');
+  await player.play();
+  assert.equal(player.resumeRequired,false);assert.equal(player.playing,true);
+  assert.equal(audio.playCalls,plays+1);assert.equal(player.position,27);
+  assert.equal(player.speed,1.5);assert.equal(audio.volume,.4);assert.equal(audio.loadCalls,0);
 });
 
 test('foreground reconciliation leaves active playback running',async t=>{
@@ -86,5 +98,57 @@ test('remote Pause updates controls before storage or a deferred native pause ev
   const changes=[];player.addEventListener('change',()=>changes.push(player.playing));
   const pausing=handlers.get('pause')({});
   assert.equal(changes.at(-1),false);assert.equal(player.playing,false);assert.equal(mediaSession.playbackState,'paused');
+  assert.equal(player.resumeRequired,true);
   unblock();await pausing;await settle(player);
+});
+
+test('an external pause with a stale paused flag blocks native, system, and automatic restarts',async t=>{
+  const {player,handlers,mediaSession}=setup(t,{full:false});
+  const twoTracks={...selected,tracks:[...selected.tracks,{id:'next',title:'Next chapter',duration:100,key:'/next'}]};
+  await player.open(twoTracks);player.audio.metadata();await settle(player);
+  const audio=player.audio,source=audio.src,calls=audio.playCalls;
+  audio.currentTime=33;
+  audio.dispatchEvent(new Event('pause'));
+  assert.equal(audio.paused,true);assert.equal(player.resumeRequired,true);
+  assert.equal(player.playing,false);assert.equal(mediaSession.playbackState,'paused');
+  document.hidden=false;document.dispatchEvent(new Event('visibilitychange'));
+  for(const type of ['play','playing']) {
+    audio.paused=false;audio.dispatchEvent(new Event(type));
+    assert.equal(audio.paused,true);assert.equal(player.playing,false);
+  }
+  await handlers.get('play')({});
+  await player.continuePlayback();
+  audio.ended=true;await player.ended();
+  assert.equal(audio.playCalls,calls);assert.equal(audio.src,source);
+  assert.equal(player.index,0);assert.equal(player.position,33);assert.equal(audio.loadCalls,0);
+  audio.ended=false;
+  await player.play();
+  assert.equal(player.resumeRequired,false);assert.equal(player.playing,true);
+  assert.equal(audio.playCalls,calls+1);assert.equal(player.position,33);
+});
+
+test('a delayed pause from an internal source change does not block the selected book',async t=>{
+  const {player}=setup(t,{full:false});
+  await player.open(selected);player.audio.metadata();await settle(player);
+  player.audio.deferPause=true;
+  await player.open({...selected,id:'other'});player.audio.metadata();
+  assert.equal(player.playing,true);
+  player.audio.dispatchEvent(new Event('pause'));
+  assert.equal(player.resumeRequired,false);assert.equal(player.playing,true);
+  assert.equal(player.book.id,'other');
+});
+
+test('a source load that cancels its old pause cannot hide a later real interruption',async t=>{
+  const {player}=setup(t,{full:false});
+  await player.open(selected);player.audio.metadata();await settle(player);
+  player.audio.deferPause=true;
+  await player.open({...selected,id:'other'});player.audio.metadata();
+  player.audio.dispatchEvent(new Event('loadstart'));
+  player.audio.deferPause=false;
+  player.audio.pause();
+  assert.equal(player.resumeRequired,true);assert.equal(player.playing,false);
+  const calls=player.audio.playCalls;
+  document.hidden=false;window.dispatchEvent(new Event('pageshow'));
+  player.audio.paused=false;player.audio.dispatchEvent(new Event('playing'));
+  assert.equal(player.audio.paused,true);assert.equal(player.audio.playCalls,calls);
 });

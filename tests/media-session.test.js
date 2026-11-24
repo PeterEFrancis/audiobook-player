@@ -72,11 +72,15 @@ test('system controls use a chapter timeline while preserving whole-book resume 
   assert.equal(player.elapsed, 100);
   await action('seekto', { seekTime: 50 });
   await action('play');
+  assert.equal(player.playing, false);
+  await player.play();
   await action('stop');
   assert.equal(player.position, 50);
   assert.equal(mediaSession.playbackState, 'paused');
   assert.equal(writes.filter(w => w.store === 'progress').at(-1).value.elapsed, 150);
   await action('play');
+  assert.equal(player.playing, false);
+  await player.play();
   player.audio.currentTime = 100;
   player.audio.paused = true;
   player.audio.ended = true;
@@ -142,7 +146,7 @@ test('embedded chapter changes reset system time and map chapter seeks to absolu
   assert.deepEqual(mediaSession.position, {duration: 60, position: 0, playbackRate: 1});
 });
 
-test('locked system play starts the same audio synchronously while its sound context resumes', async t => {
+test('system Play after a pause stays blocked until a foreground app restart resumes sound', async t => {
   for (const state of ['suspended', 'interrupted']) await t.test(state, async t => {
     const { player, handlers, mediaSession } = setup(t);
     const hidden = document.hidden;
@@ -160,7 +164,13 @@ test('locked system play starts the same audio synchronously while its sound con
     t.after(async () => { release(); await playing; await settle(player); });
     player.context = { state, resume() { resumeCalls++; return pendingContext; } };
 
-    playing = handlers.get('play')({});
+    await handlers.get('play')({});
+    assert.equal(audio.playCalls, calls);
+    assert.equal(audio.paused, true);
+    assert.equal(resumeCalls, 0);
+    assert.equal(mediaSession.playbackState, 'paused');
+    document.hidden = false;
+    playing = player.play();
     assert.equal(audio.playCalls, calls + 1);
     assert.equal(audio.paused, false);
     assert.equal(player.audio, audio);
@@ -170,17 +180,15 @@ test('locked system play starts the same audio synchronously while its sound con
     assert.equal(resumeCalls, 1);
     release();
     await playing;
-    await settle(player);
   });
 });
 
-test('locked pause then play does not wait for pending checkpoint storage', async t => {
+test('locked Pause prevents remote restart even while checkpoint storage is pending', async t => {
   const { player, handlers, mediaSession, writes } = setup(t);
   const hidden = document.hidden;
   document.hidden = true;
   t.after(() => { document.hidden = hidden; });
-  const selected = book();
-  selected.serverId = 'plex';
+  const selected = book(); selected.serverId = 'plex';
   await player.open(selected, { autoplay: false });
   player.audio.metadata();
   await player.play();
@@ -194,18 +202,17 @@ test('locked pause then play does not wait for pending checkpoint storage', asyn
   db.put = async (...args) => { await pendingStorage; return put(...args); };
 
   const pausing = handlers.get('pause')({});
-  assert.equal(audio.paused, true);
   const playing = handlers.get('play')({});
-  assert.equal(audio.playCalls, calls + 1);
-  assert.equal(audio.paused, false);
-  assert.equal(player.audio, audio);
+  assert.equal(audio.playCalls, calls);
+  assert.equal(audio.paused, true);
+  assert.equal(player.resumeRequired, true);
   assert.equal(audio.src, source);
   assert.equal(audio.playbackRate, 1.5);
-  assert.equal(mediaSession.playbackState, 'playing');
+  assert.equal(mediaSession.playbackState, 'paused');
   release();
   await Promise.all([pausing, playing]);
   await settle(player);
-  assert.equal(writes.filter(row => row.store === 'sync').at(-1).value.state, 'playing');
+  assert.equal(writes.filter(row => row.store === 'sync').at(-1).value.state, 'stopped');
 });
 
 test('a rejected interrupted-context resume is reported without blocking system play', async t => {
@@ -223,7 +230,7 @@ test('a rejected interrupted-context resume is reported without blocking system 
 });
 
 
-test('iPhone system resume reloads the same file immediately without waiting for storage', async t => {
+test('iPhone remote resume leaves the paused file loaded until the user restarts in app', async t => {
   const { player, handlers, mediaSession, writes } = setup(t, undefined, {ios: true});
   const hidden = document.hidden;
   document.hidden = true;
@@ -237,32 +244,30 @@ test('iPhone system resume reloads the same file immediately without waiting for
   player.audio.volume = 0.4;
   await settle(player);
   const audio = player.audio, source = audio.src, calls = audio.playCalls;
-  const put = db.put;
-  let release;
-  const storage = new Promise(resolve => { release = resolve; });
-  t.after(release);
-  db.put = async (...args) => { await storage; return put(...args); };
-  const pausing = handlers.get('pause')({});
-  const playing = handlers.get('play')({});
-  assert.equal(player.nativeAudioOnly, true);
-  assert.equal(audio.loadCalls, 1);
-  assert.equal(audio.playCalls, calls + 1);
+  await handlers.get('pause')({});
+  await handlers.get('play')({});
+  assert.equal(audio.loadCalls, 0);
+  assert.equal(audio.playCalls, calls);
+  assert.equal(audio.paused, true);
   assert.equal(player.audio, audio);
   assert.equal(audio.src, source);
   assert.equal(player.position, 42.5);
+  assert.equal(mediaSession.playbackState, 'paused');
+  document.hidden = false;
+  await player.play();
+  assert.equal(audio.loadCalls, 0);
+  assert.equal(audio.playCalls, calls + 1);
+  assert.equal(player.position, 42.5);
   assert.equal(audio.playbackRate, 1.5);
   assert.equal(audio.volume, 0.4);
-  assert.equal(mediaSession.playbackState, 'playing');
-  audio.metadata();
-  assert.equal(audio.currentTime, 42.5);
-  release();
-  await Promise.all([pausing, playing]);
-  await settle(player);
   assert.equal(writes.filter(row => row.store === 'sync').at(-1).value.state, 'playing');
 });
 
-test('iPhone system resume applies smart rewind before reloading the file', async t => {
+test('smart rewind is deferred until the user restarts paused playback inside the app', async t => {
   const {player, handlers} = setup(t, undefined, {ios: true});
+  const hidden = document.hidden;
+  document.hidden = true;
+  t.after(() => { document.hidden = hidden; });
   await player.open(book(), {autoplay: false});
   player.audio.metadata();
   await player.play();
@@ -270,39 +275,41 @@ test('iPhone system resume applies smart rewind before reloading the file', asyn
   player.audio.pause();
   await settle(player);
   player.pausedAt = Date.now() - 31000;
-  const playing = handlers.get('play')({});
-  assert.equal(player.audio.loadCalls, 1);
+  await handlers.get('play')({});
+  assert.equal(player.audio.loadCalls, 0);
+  assert.equal(player.position, 55);
+  document.hidden = false;
+  await player.play();
+  assert.equal(player.audio.loadCalls, 0);
   assert.equal(player.position, 45);
-  player.audio.metadata();
   assert.equal(player.audio.currentTime, 45);
-  await playing;
-  await settle(player);
 });
 
-test('first iPhone play, foreground iPhone resume, and non-iPhone system resume avoid reload', async t => {
+test('initial system Play remains available and foreground app restart does not reload', async t => {
   for (const ios of [true, false]) await t.test(ios ? 'iPhone' : 'other platforms', async t => {
     const {player, handlers} = setup(t, undefined, {ios});
+    const hidden = document.hidden;
+    document.hidden = false;
+    t.after(() => { document.hidden = hidden; });
     await player.open(book(), {autoplay: false});
     player.audio.metadata();
     await handlers.get('play')({});
     await settle(player);
+    assert.equal(player.playing, true);
     assert.equal(player.audio.loadCalls, 0);
     player.audio.pause();
     await settle(player);
+    const calls = player.audio.playCalls;
+    await handlers.get('play')({});
+    assert.equal(player.audio.playCalls, calls);
+    assert.equal(player.playing, false);
     await player.play();
-    await settle(player);
+    assert.equal(player.playing, true);
     assert.equal(player.audio.loadCalls, 0);
-    if (!ios) {
-      player.audio.pause();
-      await settle(player);
-      await handlers.get('play')({});
-      await settle(player);
-      assert.equal(player.audio.loadCalls, 0);
-    }
   });
 });
 
-test('duplicate system Play does not reload twice and a later Pause survives recovery completion', async t => {
+test('duplicate remote Play stays blocked and a later Pause wins over an app restart awaiting storage', async t => {
   const {player, handlers, mediaSession} = setup(t, undefined, {ios: true});
   const hidden = document.hidden;
   document.hidden = true;
@@ -320,21 +327,23 @@ test('duplicate system Play does not reload twice and a later Pause survives rec
   const put = db.put;
   db.put = async (...args) => { await storage; return put(...args); };
 
-  const first = handlers.get('play')({});
-  const duplicate = handlers.get('play')({});
-  assert.equal(player.audio.loadCalls, 1);
-  assert.equal(player.pendingSeek, 42);
+  const calls = player.audio.playCalls;
+  await Promise.all([handlers.get('play')({}), handlers.get('play')({})]);
+  assert.equal(player.audio.playCalls, calls);
+  assert.equal(player.audio.loadCalls, 0);
+  assert.equal(player.position, 42);
+  document.hidden = false;
+  const restart = player.play();
+  assert.equal(player.audio.playCalls, calls + 1);
   const pausing = handlers.get('pause')({});
   assert.equal(player.audio.paused, true);
-  assert.equal(player.pendingSeek, 42);
   player.audio.metadata();
-  assert.equal(player.audio.currentTime, 42);
-  assert.equal(player.audio.paused, true);
   release();
-  await Promise.all([first, duplicate, pausing]);
+  await Promise.all([restart, pausing]);
   await settle(player);
-  assert.equal(player.audio.loadCalls, 1);
+  assert.equal(player.audio.loadCalls, 0);
   assert.equal(player.position, 42);
   assert.equal(player.audio.paused, true);
+  assert.equal(player.resumeRequired, true);
   assert.equal(mediaSession.playbackState, 'paused');
 });

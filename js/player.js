@@ -20,6 +20,8 @@ export class Player extends EventTarget {
     this.listening = false;
     this.progressChanged = false;
     this.playbackStarted = false;
+    this.resumeRequired = false;
+    this.internalPauses = 0;
     this.saves = Promise.resolve();
     const metadata = () => {
       if (!this.book || this.switching || (this.audio.currentSrc && this.audio.currentSrc !== this.activeSource)) return;
@@ -33,11 +35,20 @@ export class Player extends EventTarget {
     };
     this.audio.addEventListener('loadedmetadata', metadata);
     this.audio.addEventListener('durationchange', metadata);
+    // A new load cancels queued events from the previous source.
+    this.audio.addEventListener('loadstart', () => { this.internalPauses = 0; });
     this.audio.addEventListener('timeupdate', () => {
       this.tick();
       if (Date.now() - (this.lastTrace || 0) >= 10000) { this.lastTrace = Date.now(); this.tracePlayback('timeupdate'); }
     });
+    const blockResume = () => {
+      if (!this.resumeRequired) return false;
+      this.requireUserResume();
+      return true;
+    };
+    this.audio.addEventListener('play', blockResume);
     this.audio.addEventListener('playing', () => {
+      if (blockResume()) return;
       this.accountListening();
       this.listening = true;
       this.playbackStarted = true;
@@ -48,6 +59,12 @@ export class Player extends EventTarget {
       this.emit();
     });
     this.audio.addEventListener('pause', () => {
+      const internal = this.internalPauses > 0;
+      if (internal) this.internalPauses--;
+      if (!internal && !this.switching && !this.audio.ended && this.book) {
+        this.resumeRequired = true;
+        if (!this.audio.paused) this.audio.pause();
+      }
       if (!this.audio.paused) return;
       this.accountListening();
       this.listening = false;
@@ -59,10 +76,13 @@ export class Player extends EventTarget {
     });
     this.audio.addEventListener('ended', () => this.ended().catch(e => this.error(e)));
     this.audio.addEventListener('error', () => {
-      if (this.audio.error) this.error(new Error(navigator.onLine ? 'This audio could not be played. Check the server connection and that your browser supports its format (MP3, AAC, or M4B/AAC).' : 'This track is not available offline. Download the complete book before disconnecting.'));
+      if (this.audio.error) {
+        this.requireUserResume();
+        this.error(new Error(navigator.onLine ? 'This audio could not be played. Check the server connection and that your browser supports its format (MP3, AAC, or M4B/AAC).' : 'This track is not available offline. Download the complete book before disconnecting.'));
+      }
     });
     this.audio.addEventListener('waiting', () => { this.accountListening(); this.listening = false; this.emit(); });
-    for (const event of ['play', 'playing', 'pause', 'waiting', 'stalled', 'error', 'loadedmetadata', 'seeking', 'seeked', 'emptied']) {
+    for (const event of ['play', 'playing', 'pause', 'waiting', 'stalled', 'error', 'loadstart', 'loadedmetadata', 'seeking', 'seeked', 'emptied']) {
       this.audio.addEventListener(event, () => this.tracePlayback(event));
     }
     this.timer = setInterval(() => this.checkSleep(), 500);
@@ -79,12 +99,24 @@ export class Player extends EventTarget {
   get track() { return this.book?.tracks?.[this.index]; }
   get position() { return this.pendingSeek ?? this.audio.currentTime ?? 0; }
   get elapsed() { return this.book ? absolutePosition(this.book, this.index, this.position) : 0; }
-  get playing() { return !this.audio.paused && !this.audio.ended; }
+  get playing() { return !this.resumeRequired && !this.audio.paused && !this.audio.ended; }
   get speed() { return this.audio.playbackRate; }
+  pauseForSourceChange() {
+    if (!this.audio.paused) this.internalPauses++;
+    this.audio.pause();
+  }
+  requireUserResume() {
+    if (!this.book || this.switching) return this.saves;
+    this.resumeRequired = true;
+    this.reconcilePlayback();
+    return this.saves;
+  }
   reconcilePlayback() {
     if (this.switching) return;
-    try { if (navigator.audioSession?.state === 'interrupted') this.audio.pause(); } catch {}
+    try { if (navigator.audioSession?.state === 'interrupted' && this.book) this.resumeRequired = true; } catch {}
+    if (this.resumeRequired && !this.audio.paused) this.audio.pause();
     if (this.audio.paused || this.audio.ended) {
+      if (!this.audio.ended && !this.internalPauses && (this.listening || this.playbackStarted)) this.resumeRequired = true;
       if (this.listening || this.playbackStarted) this.progressChanged = true;
       this.listening = this.playbackStarted = false;
       // A missing pause event has no reliable wall-clock time. Keep the media
@@ -139,10 +171,12 @@ export class Player extends EventTarget {
     if (this.playbackEvents.length > 40) this.playbackEvents.shift();
   }
   diagnostics() {
-    return {build: 'folio-audio-76', nativeAudioOnly: this.nativeAudioOnly, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
+    return {build: 'folio-audio-77', nativeAudioOnly: this.nativeAudioOnly, resumeRequired: this.resumeRequired, ...this.playbackSnapshot(), events: this.playbackEvents.map(event => ({...event}))};
   }
   async reloadAudio() {
     if (!this.book || !this.audio.src) return;
+    if (this.resumeRequired && document.hidden) return;
+    this.resumeRequired = false;
     const position = this.position, rate = this.speed, volume = this.audio.volume;
     this.tracePlayback('reload');
     this.pendingSeek = position;
@@ -191,7 +225,7 @@ export class Player extends EventTarget {
     this.accountListening();
     this.listening = false;
     this.switching = true;
-    this.audio.pause();
+    this.pauseForSourceChange();
     if (!sameBook) {
       this.clearSleep();
       this.sleepStopped = false;
@@ -285,6 +319,7 @@ export class Player extends EventTarget {
     return task.promise;
   }
   continuePlayback() {
+    if (this.resumeRequired) return Promise.resolve();
     const book = this.book, index = this.index + 1, track = book.tracks[index];
     const prepared = this.nextSource;
     const ready = prepared?.bookId === book.id && prepared.index === index && prepared.generation === this.generation;
@@ -318,6 +353,7 @@ export class Player extends EventTarget {
     return playing;
   }
   startAudio() {
+    if (this.resumeRequired) return Promise.resolve();
     try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch {}
     // Keep play in the system-control event's task. A locked iPhone can leave
     // sound processing suspended/interrupted with a resume promise that stalls.
@@ -334,6 +370,8 @@ export class Player extends EventTarget {
   }
   async play({system = false} = {}) {
     if (!this.book) return;
+    if (this.resumeRequired && (system || document.hidden)) { this.requireUserResume(); return; }
+    if (!system && !document.hidden) this.resumeRequired = false;
     try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch {}
     this.sleepStopped = false;
     if (this.pendingSeek == null && (this.completed || this.audio.ended)) {
@@ -341,14 +379,10 @@ export class Player extends EventTarget {
       await this.open(this.book, {index, position: 0});
       return;
     }
-    const reload = system && this.nativeAudioOnly && this.audio.paused && this.pausedAt > 0;
     if (this.pausedAt && Date.now() - this.pausedAt > 30000 && this.settings.smartRewind !== false) {
       this.pendingSeek = Math.max(0, this.position - Number(this.settings.rewindSeconds || 10));
       this.applyPendingSeek();
     }
-    // iOS can resolve play() while its media clock remains frozen after a
-    // lock-screen pause. Reuse the confirmed manual recovery in this action's task.
-    if (reload) { await this.reloadAudio(); return; }
     this.pausedAt = 0;
     if (!this.context && (this.sound?.voiceBoost || this.sound?.bass || this.sound?.treble)) {
       try { this.configureSound(this.sound); } catch (error) { this.error(error); }
@@ -428,7 +462,7 @@ export class Player extends EventTarget {
     this.emit();
   }
   async ended() {
-    if (!this.book || this.switching || this.opening || this.pendingSeek != null || !this.audio.ended || this.completed) return;
+    if (!this.book || this.resumeRequired || this.switching || this.opening || this.pendingSeek != null || !this.audio.ended || this.completed) return;
     this.accountListening();
     this.listening = false;
     this.progressChanged = true;
@@ -460,7 +494,7 @@ export class Player extends EventTarget {
     if (this.sleep.type === 'time' && remaining <= 10) this.audio.volume = (this.settings.volume ?? 1) * Math.max(0, remaining / 10);
     if (remaining <= 0.15) {
       this.sleepStopped = true;
-      this.audio.pause();
+      this.requireUserResume();
       this.clearSleep();
       this.persist().catch(e => this.error(e));
       this.dispatchEvent(new CustomEvent('sleepend'));
@@ -511,7 +545,7 @@ export class Player extends EventTarget {
   }
   setupMediaSession() {
     if (!navigator.mediaSession) return;
-    const pause = async () => { this.audio.pause(); this.emit(); await this.persist(); };
+    const pause = () => this.requireUserResume();
     const actions = {play: () => this.play({system: true}), pause, stop: pause, seekbackward: d => this.skip(-(d.seekOffset || 15)), seekforward: d => this.skip(d.seekOffset || 30), previoustrack: () => this.chapter(-1), nexttrack: () => this.chapter(1), seekto: d => {
       if (!this.book || !Number.isFinite(d.seekTime)) return;
       const chapter = playbackChapter(this.book, this.index, this.position);

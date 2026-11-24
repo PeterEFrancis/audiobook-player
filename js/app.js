@@ -283,7 +283,7 @@ async function addLibriVoxBook(id) {
 async function stopCurrentBook(id, save = true) {
   if(player.book?.id!==id)return;
   player.switching=true;
-  player.audio.pause();
+  player.pauseForSourceChange();
   player.clearSleep();
   player.switching=false;
   const saved=save?player.persist():Promise.resolve();
